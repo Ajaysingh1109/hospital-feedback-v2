@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hospital_feedback_api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8001}:8001"
+    environment:
+      - APP_NAME=AI Hospital Patient Feedback System
+      - ENVIRONMENT=production
+      - DEBUG=False
+      - PORT=8001
+      - MASTER_USERNAME=${MASTER_USERNAME}
+      - MASTER_PASSWORD=${MASTER_PASSWORD}
+      - MASTER_DISPLAY_NAME=${MASTER_DISPLAY_NAME:-Apollo Master Administrator}
+      - SECRET_KEY=${SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=480
+      - DATABASE_URL=${DATABASE_URL}
+      - CORS_ORIGINS=*
+      - AUDIO_STORAGE_DIR=/app/data/audio
+      - AUDIO_RETENTION_POLICY=keep
+      - AI_PROVIDER=gemini
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=gemini-3-flash-preview
+      - CRON_SECRET=${CRON_SECRET:-}
+    volumes:
+      - audio_data:/app/data/audio
+      - ./backend/data/backups:/app/data/backups
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: hospital_feedback_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  audio_data:
+  postgres_data:

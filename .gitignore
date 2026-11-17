@@ -1,0 +1,84 @@
+# ================================
+# Environment & Secrets
+# ================================
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# ================================
+# Backend Local Data
+# ================================
+backend/data/
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+
+# Audio / Uploaded Patient Data
+backend/data/audio/
+*.webm
+*.wav
+*.mp3
+*.m4a
+*.ogg
+
+# ================================
+# Frontend
+# ================================
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ================================
+# Node
+# ================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ================================
+# OS / Editor
+# ================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ================================
+# Logs
+# ================================
+*.log
+logs/
+
+# ================================
+# Temporary / Runtime
+# ================================
+tmp/
+temp/
+*.tmp
+
+# ================================
+# Test / Generated Files
+# ================================
+test-results/
+playwright-report/
+coverage/
+*.tsbuildinfo

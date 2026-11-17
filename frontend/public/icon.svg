@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0d9488" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#0f172a" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Rounded App Icon Background -->
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)" />
+
+  <!-- Healthcare Shield / Cross Emblem with Shadow -->
+  <g filter="url(#shadow)" transform="translate(256, 256)">
+    <!-- Hospital Cross Core -->
+    <rect x="-42" y="-140" width="84" height="280" rx="42" fill="#ffffff" />
+    <rect x="-140" y="-42" width="280" height="84" rx="42" fill="#ffffff" />
+    
+    <!-- Pulse Soundwave Center Accent -->
+    <circle cx="0" cy="0" r="48" fill="#0284c7" />
+    
+    <!-- Microphone / Soundwave motif in center -->
+    <rect x="-10" y="-20" width="20" height="32" rx="10" fill="#ffffff" />
+    <path d="M -18, -4 C -18, 14 18, 14 18, -4" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" />
+    <line x1="0" y1="14" x2="0" y2="24" stroke="#ffffff" stroke-width="5" stroke-linecap="round" />
+    
+    <!-- Soundwave lines -->
+    <path d="M -70, -20 Q -90, 0 -70, 20" fill="none" stroke="#0d9488" stroke-width="8" stroke-linecap="round" />
+    <path d="M 70, -20 Q 90, 0 70, 20" fill="none" stroke="#0d9488" stroke-width="8" stroke-linecap="round" />
+  </g>
+</svg>
