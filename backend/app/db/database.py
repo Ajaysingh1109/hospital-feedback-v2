@@ -7,10 +7,24 @@ from ..core.config import get_settings
 
 settings = get_settings()
 
-db_url = settings.DATABASE_URL
-# Normalization for managed PostgreSQL cloud providers (Render, Supabase, Railway, Neon)
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+def normalize_database_url(url: str) -> str:
+    """
+    Normalizes database URL for cloud providers (Render, Supabase, Neon, Railway).
+    Ensures that PostgreSQL URLs explicitly use the psycopg2 driver (postgresql+psycopg2://)
+    to prevent SQLAlchemy 2.0+ from falling back to psycopg v3 (ModuleNotFoundError: No module named 'psycopg').
+    Preserves SQLite URLs and explicit driver specifications (e.g., postgresql+psycopg2://).
+    """
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
+
+
+db_url = normalize_database_url(settings.DATABASE_URL)
 
 if db_url.startswith("sqlite"):
     # Ensure local directory exists for SQLite

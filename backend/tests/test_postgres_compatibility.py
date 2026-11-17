@@ -74,3 +74,34 @@ def test_postgresql_mock_execution():
     Base.metadata.create_all(mock_pg_engine)
 
     assert len(statements) >= 14, f"Expected at least 14 DDL statements, got {len(statements)}"
+
+
+def test_database_url_normalization_for_psycopg2():
+    """
+    Verifies that postgres:// and postgresql:// are explicitly normalized to postgresql+psycopg2://
+    to prevent SQLAlchemy 2.0+ from falling back to psycopg v3 (ModuleNotFoundError: No module named 'psycopg').
+    Verifies SQLite URLs remain completely unaffected for local development.
+    """
+    from app.db.database import normalize_database_url
+
+    # 1. postgres:// (Legacy Heroku/Render scheme)
+    assert normalize_database_url("postgres://user:secret@dpg-host:5432/hospital_db") == (
+        "postgresql+psycopg2://user:secret@dpg-host:5432/hospital_db"
+    )
+
+    # 2. postgresql:// (Render fromDatabase connectionString / Supabase / Neon)
+    assert normalize_database_url("postgresql://hospital_user:secret@dpg-host:5432/hospital_feedback") == (
+        "postgresql+psycopg2://hospital_user:secret@dpg-host:5432/hospital_feedback"
+    )
+
+    # 3. Already explicit postgresql+psycopg2:// (unmodified)
+    assert normalize_database_url("postgresql+psycopg2://user:secret@localhost:5432/db") == (
+        "postgresql+psycopg2://user:secret@localhost:5432/db"
+    )
+
+    # 4. Local SQLite development (unmodified)
+    assert normalize_database_url("sqlite:///./data/hospital_feedback.db") == (
+        "sqlite:///./data/hospital_feedback.db"
+    )
+    assert normalize_database_url("sqlite:///:memory:") == "sqlite:///:memory:"
+
