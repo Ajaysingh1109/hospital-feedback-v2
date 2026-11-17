@@ -13,6 +13,7 @@ from .api.v1.router import api_router
 from .core.config import get_settings
 from .db.database import Base, SessionLocal, engine
 from .seed import seed_database
+from .services.recovery_service import recover_orphaned_feedback_jobs
 from .services.retention_service import run_automatic_retention_purge
 
 logging.basicConfig(
@@ -25,12 +26,12 @@ settings = get_settings()
 
 
 async def scheduled_retention_worker():
-    """Background task running automatic 48-hour retention purge periodically."""
-    logger.info("[Retention Worker] Scheduled 48-hour retention worker started.")
+    """Background task running automatic 12-hour retention purge periodically."""
+    logger.info("[Retention Worker] Scheduled 12-hour retention worker started.")
     # Run once at startup to purge any expired records while server was offline
     try:
         with SessionLocal() as db:
-            run_automatic_retention_purge(db=db, retention_hours=48)
+            run_automatic_retention_purge(db=db, retention_hours=12)
     except Exception as e:
         logger.error(f"[Retention Worker] Startup purge exception: {e}")
 
@@ -39,7 +40,7 @@ async def scheduled_retention_worker():
             # Check every 10 minutes (600 seconds)
             await asyncio.sleep(600)
             with SessionLocal() as db:
-                run_automatic_retention_purge(db=db, retention_hours=48)
+                run_automatic_retention_purge(db=db, retention_hours=12)
         except asyncio.CancelledError:
             logger.info("[Retention Worker] Retention worker cancelled during shutdown.")
             break
@@ -61,10 +62,20 @@ async def lifespan(app: FastAPI):
                 if cols and "complaint" not in cols:
                     conn.execute(text("ALTER TABLE feedback ADD COLUMN complaint TEXT DEFAULT 'Not Provided'"))
                     conn.commit()
+                if cols and "processing_error" not in cols:
+                    conn.execute(text("ALTER TABLE feedback ADD COLUMN processing_error TEXT"))
+                    conn.commit()
         except Exception as e:
             logger.warning(f"Column migration check notice: {e}")
     seed_database()
     logger.info("Database initialized and seeded.")
+
+    # Recover any interrupted or orphaned background feedback jobs from previous run
+    try:
+        with SessionLocal() as db:
+            recover_orphaned_feedback_jobs(db=db, engine_bind=engine)
+    except Exception as e:
+        logger.error(f"[Startup Recovery] Exception during recovery check: {e}")
 
     # Start automated retention purge worker
     purge_task = asyncio.create_task(scheduled_retention_worker())
@@ -76,13 +87,13 @@ async def lifespan(app: FastAPI):
         await purge_task
     except asyncio.CancelledError:
         pass
-    logger.info("Shutting down Hospital Feedback System.")
+    logger.info("Shutting down FEEDBACK MAC System.")
 
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Production-Ready AI Hospital Patient Feedback Platform",
-    version="1.0.0",
+    description="FEEDBACK MAC — Autonomous Bedside Voice Feedback Platform Powered by Saarthi-One",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -147,7 +158,8 @@ if static_dir.exists():
         index_file = static_dir / "index.html"
         if index_file.exists() and not request.url.path.startswith("/api"):
             return FileResponse(index_file)
-        return JSONResponse(status_code=404, content={"detail": "Not found"})
+        detail = getattr(exc, "detail", "Not found")
+        return JSONResponse(status_code=404, content={"detail": detail})
 
 
 

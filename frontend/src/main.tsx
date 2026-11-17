@@ -12,8 +12,9 @@ if (rootEl) {
   );
 }
 
-// Register PWA Service Worker (Section 15)
-if ("serviceWorker" in navigator && !window.location.host.includes("localhost:5173")) {
+// Register PWA Service Worker in production only (avoids development cache issues)
+const isDevHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+if ("serviceWorker" in navigator && !isDevHost) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").then(
       (reg) => console.log("[PWA] Service Worker registered:", reg.scope),

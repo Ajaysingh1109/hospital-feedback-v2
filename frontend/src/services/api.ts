@@ -1,10 +1,12 @@
 import {
   AnalyticsSummary,
+  AsyncFeedbackOut,
   AuthResponse,
   FeedbackListResponse,
   FeedbackRecord,
   MasterData,
   ProcessAudioResult,
+  QueueStatusResponse,
   User,
 } from "../types";
 
@@ -43,15 +45,23 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
   }
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+    });
+  } catch (_netErr) {
+    throw new Error("Unable to connect. Please check your internet connection.");
+  }
 
   if (res.status === 401) {
-    clearToken();
-    window.dispatchEvent(new Event("auth:logout"));
-    throw new Error("Session expired. Please log in again.");
+    if (endpoint !== "/auth/login") {
+      clearToken();
+      sessionStorage.setItem("auth_notice", "Your session has expired. Please sign in again.");
+      window.dispatchEvent(new Event("auth:logout"));
+      throw new Error("Session expired. Please log in again.");
+    }
   }
 
   if (!res.ok) {
@@ -90,9 +100,11 @@ export async function login(
 
 export async function logout(): Promise<void> {
   try {
+    sessionStorage.removeItem("auth_notice");
     await request("/auth/logout", { method: "POST" });
   } finally {
     clearToken();
+    sessionStorage.removeItem("auth_notice");
   }
 }
 
@@ -131,11 +143,33 @@ export async function processAudio(
   });
 }
 
+export async function processText(
+  text: string,
+  clientUuid?: string
+): Promise<ProcessAudioResult> {
+  return request<ProcessAudioResult>("/feedback/process-text", {
+    method: "POST",
+    body: JSON.stringify({ text, client_uuid: clientUuid }),
+  });
+}
+
+
 export async function submitFeedback(payload: any): Promise<FeedbackRecord> {
   return request<FeedbackRecord>("/feedback", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function submitAsyncFeedback(formData: FormData): Promise<AsyncFeedbackOut> {
+  return request<AsyncFeedbackOut>("/feedback/async", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+export async function fetchQueueStatus(): Promise<QueueStatusResponse> {
+  return request<QueueStatusResponse>("/feedback/queue-status");
 }
 
 export async function fetchMySubmissions(): Promise<FeedbackRecord[]> {
@@ -208,6 +242,27 @@ export async function triggerRetentionPurge(): Promise<any> {
   return request<any>("/admin/retention/purge-now", {
     method: "POST",
   });
+}
+
+export async function fetchAudioBlob(audioId: string): Promise<Blob> {
+  const token = getToken();
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${API_BASE}/audio/${encodeURIComponent(audioId)}`, {
+    headers,
+  });
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error("Audio recording has expired and been permanently deleted per 12-hour hospital retention policy.");
+    }
+    if (res.status === 403) {
+      throw new Error("Unauthorized: You do not have permission to listen to this recording.");
+    }
+    throw new Error(`Failed to load audio (${res.status})`);
+  }
+  return res.blob();
 }
 
 export async function downloadExcel(filters: {
@@ -293,5 +348,18 @@ export async function updateHODMapping(id: number, hod_name: string): Promise<an
   return request<any>(`/admin/hod-mappings/${id}`, {
     method: "PUT",
     body: JSON.stringify({ hod_name }),
+  });
+}
+
+export async function createHODMapping(department_name: string, hod_name: string): Promise<any> {
+  return request<any>("/admin/hod-mappings", {
+    method: "POST",
+    body: JSON.stringify({ department_name, hod_name }),
+  });
+}
+
+export async function restoreDefaultHODMappings(): Promise<any[]> {
+  return request<any[]>("/admin/hod-mappings/restore-defaults", {
+    method: "POST",
   });
 }

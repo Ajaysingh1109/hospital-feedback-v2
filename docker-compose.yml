@@ -10,22 +10,25 @@ services:
     ports:
       - "${PORT:-8001}:8001"
     environment:
-      - APP_NAME=AI Hospital Patient Feedback System
+      - APP_NAME=FEEDBACK MAC
       - ENVIRONMENT=production
       - DEBUG=False
       - PORT=8001
       - MASTER_USERNAME=${MASTER_USERNAME}
       - MASTER_PASSWORD=${MASTER_PASSWORD}
-      - MASTER_DISPLAY_NAME=${MASTER_DISPLAY_NAME:-Apollo Master Administrator}
+      - MASTER_DISPLAY_NAME=${MASTER_DISPLAY_NAME:-Hospital Master Administrator}
+      - FEEDBACK_USER_USERNAME=${FEEDBACK_USER_USERNAME:-}
+      - FEEDBACK_USER_PASSWORD=${FEEDBACK_USER_PASSWORD:-}
+      - FEEDBACK_USER_DISPLAY_NAME=${FEEDBACK_USER_DISPLAY_NAME:-Duty Feedback Nurse}
       - SECRET_KEY=${SECRET_KEY}
       - ACCESS_TOKEN_EXPIRE_MINUTES=480
       - DATABASE_URL=${DATABASE_URL}
-      - CORS_ORIGINS=*
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
       - AUDIO_STORAGE_DIR=/app/data/audio
       - AUDIO_RETENTION_POLICY=keep
       - AI_PROVIDER=gemini
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - GEMINI_MODEL=gemini-3-flash-preview
+      - GEMINI_MODEL=gemini-3.5-flash-lite
       - CRON_SECRET=${CRON_SECRET:-}
     volumes:
       - audio_data:/app/data/audio

@@ -8,6 +8,10 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: false
+    disk:
+      name: hospital-feedback-data
+      mountPath: /app/data
+      sizeGB: 10
     envVars:
       - key: ENVIRONMENT
         value: production
@@ -22,9 +26,9 @@ services:
           name: hospital-feedback-db
           property: connectionString
       - key: CORS_ORIGINS
-        value: "*"
+        sync: false  # Configure exact production frontend domain(s) (e.g. https://your-frontend.vercel.app)
       - key: AUDIO_STORAGE_DIR
-        value: /tmp/audio
+        value: /app/data/audio
       - key: AUDIO_RETENTION_POLICY
         value: keep
       - key: AI_PROVIDER
@@ -32,16 +36,40 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODEL
-        value: gemini-3-flash-preview
+        value: gemini-3.5-flash-lite
       - key: MASTER_USERNAME
-        value: Apollo@123
+        sync: false
       - key: MASTER_PASSWORD
-        value: 2321@Apollo
+        sync: false
       - key: MASTER_DISPLAY_NAME
-        value: "Apollo Master Administrator"
+        value: "Hospital Master Administrator"
+      - key: FEEDBACK_USER_USERNAME
+        sync: false
+      - key: FEEDBACK_USER_PASSWORD
+        sync: false
+      - key: FEEDBACK_USER_DISPLAY_NAME
+        value: "Duty Feedback Nurse"
+      - key: CRON_SECRET
+        generateValue: true
+
+  # 2. Scheduled 12-Hour Retention Purge Worker (Render Cron Job)
+  # Triggers the automated retention purge periodically via secure webhook.
+  - type: cron
+    name: hospital-feedback-retention-cron
+    env: python
+    rootDir: backend
+    schedule: "0 * * * *"  # Runs hourly
+    buildCommand: pip install requests
+    startCommand: python -c "import os, requests; url = os.getenv('BACKEND_INTERNAL_URL', 'http://hospital-feedback-api:8001'); key = os.getenv('CRON_SECRET'); r = requests.post(f'{url}/api/v1/admin/retention/cron-trigger', headers={'X-Cron-Key': key}, timeout=30); print('Retention Purge Status:', r.status_code)"
+    envVars:
+      - key: CRON_SECRET
+        fromService:
+          type: web
+          name: hospital-feedback-api
+          envVarKey: CRON_SECRET
 
 databases:
-  # 2. Central Managed PostgreSQL Database
+  # 3. Central Managed PostgreSQL Database
   - name: hospital-feedback-db
     databaseName: hospital_feedback
     user: hospital_user

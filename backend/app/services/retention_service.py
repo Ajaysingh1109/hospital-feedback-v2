@@ -16,11 +16,11 @@ from .audio_service import ensure_audio_dir
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-RETENTION_HOURS = 48
+RETENTION_HOURS = 12
 
 
 def calculate_retention_expiry(created_at: datetime) -> datetime:
-    """Returns exact timestamp when feedback must be purged (created_at + 48 hours)."""
+    """Returns exact timestamp when feedback must be purged (created_at + 12 hours)."""
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     return created_at + timedelta(hours=RETENTION_HOURS)

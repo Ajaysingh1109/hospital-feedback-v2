@@ -174,7 +174,8 @@ class Feedback(Base):
     # Submission metadata & Recording Consent (Section 19)
     consent_status: Mapped[str] = mapped_column(String(50), default="CONSENT_OBTAINED", nullable=False)
     consent_timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="SUBMITTED", index=True)
+    status: Mapped[str] = mapped_column(String(50), default="SUBMITTED", index=True)
+    processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

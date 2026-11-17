@@ -3,6 +3,9 @@ import uuid
 import openpyxl
 from fastapi.testclient import TestClient
 
+TEST_MASTER_USERNAME = "test_master@local"
+TEST_MASTER_PASSWORD = "TestMasterPassword!123"
+
 
 def test_section_63_end_to_end_acceptance_workflow(client: TestClient):
     """
@@ -15,7 +18,7 @@ def test_section_63_end_to_end_acceptance_workflow(client: TestClient):
     # 0. Master logs in and creates staff account
     master_login_init = client.post(
         "/api/v1/auth/login",
-        json={"username": "Apollo@123", "password": "2321@Apollo"},
+        json={"username": TEST_MASTER_USERNAME, "password": TEST_MASTER_PASSWORD},
     )
     assert master_login_init.status_code == 200
     master_token = master_login_init.json()["access_token"]
@@ -117,7 +120,7 @@ def test_section_63_end_to_end_acceptance_workflow(client: TestClient):
     # 7. Master Admin logs in
     admin_login_res = client.post(
         "/api/v1/auth/login",
-        json={"username": "Apollo@123", "password": "2321@Apollo"},
+        json={"username": TEST_MASTER_USERNAME, "password": TEST_MASTER_PASSWORD},
     )
     assert admin_login_res.status_code == 200
     admin_token = admin_login_res.json()["access_token"]
@@ -183,7 +186,7 @@ def test_cloud_mobile_offline_and_laptop_independence_workflow(client: TestClien
     9. Verifies exact 11 columns, no technical metadata, no original transcript, complaint contains ONLY English complaint.
     """
     # 1. Master creates mobile staff user
-    m_login = client.post("/api/v1/auth/login", json={"username": "Apollo@123", "password": "2321@Apollo"})
+    m_login = client.post("/api/v1/auth/login", json={"username": TEST_MASTER_USERNAME, "password": TEST_MASTER_PASSWORD})
     assert m_login.status_code == 200
     m_headers = {"Authorization": f"Bearer {m_login.json()['access_token']}"}
 
@@ -248,7 +251,7 @@ def test_cloud_mobile_offline_and_laptop_independence_workflow(client: TestClien
     assert retry_res.json()["feedback_id"] == fb_id
 
     # 6. Laptop Master opens admin later and exports Excel
-    m_admin_login = client.post("/api/v1/auth/login", json={"username": "Apollo@123", "password": "2321@Apollo"})
+    m_admin_login = client.post("/api/v1/auth/login", json={"username": TEST_MASTER_USERNAME, "password": TEST_MASTER_PASSWORD})
     m_admin_headers = {"Authorization": f"Bearer {m_admin_login.json()['access_token']}"}
 
     excel_res = client.get("/api/v1/admin/export-excel", headers=m_admin_headers)

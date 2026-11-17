@@ -20,15 +20,15 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
         {/* Brand */}
         <div className="flex items-center gap-2.5">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-sky-600 to-teal-600 flex items-center justify-center text-white shadow-md shadow-sky-600/20">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-teal-700 to-emerald-600 flex items-center justify-center text-white shadow-md shadow-teal-700/20">
             <Activity className="w-6 h-6 stroke-[2.5]" />
           </div>
           <div>
-            <h1 className="text-base font-bold text-slate-900 tracking-tight leading-tight">
-              Hospital Patient Feedback
+            <h1 className="text-base font-black text-slate-900 tracking-tight leading-tight">
+              FEEDBACK MAC
             </h1>
-            <p className="text-[11px] font-medium text-slate-500 flex items-center gap-1.5">
-              <span>Saarthi Care Intelligence</span>
+            <p className="text-[10px] font-bold text-teal-700 flex items-center gap-1.5 uppercase tracking-wider">
+              <span>Powered by Saarthi-One</span>
               {(user?.role === "ADMIN" || user?.role === "MASTER") && (
                 <span className="bg-purple-100 text-purple-700 font-bold px-1.5 py-0.2 rounded-md text-[10px]">
                   {user.role}

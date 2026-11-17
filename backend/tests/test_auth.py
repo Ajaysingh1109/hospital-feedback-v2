@@ -4,24 +4,25 @@ from sqlalchemy import func, select
 from app.models import User, RoleEnum
 from app.core.config import get_settings
 
+TEST_MASTER_USERNAME = "test_master@local"
+TEST_MASTER_PASSWORD = "TestMasterPassword!123"
+
 settings = get_settings()
 
 
 def test_master_login_works(client: TestClient):
     """
-    Test Master account authentication with canonical credentials:
-    Username: Apollo@123
-    Password: 2321@Apollo
+    Test Master account authentication with test credentials.
     """
     response = client.post(
         "/api/v1/auth/login",
-        json={"username": "Apollo@123", "password": "2321@Apollo"},
+        json={"username": TEST_MASTER_USERNAME, "password": TEST_MASTER_PASSWORD},
     )
     assert response.status_code == 200
     data = response.json()
     assert "access_token" in data
     assert data["role"] in ["ADMIN", "MASTER"]
-    assert data["username"].lower() == "apollo@123"
+    assert data["username"].lower() == TEST_MASTER_USERNAME.lower()
     # First login requires password change
     assert data["must_change_password"] is True
 
@@ -32,7 +33,7 @@ def test_invalid_master_password_rejected(client: TestClient):
     """
     response = client.post(
         "/api/v1/auth/login",
-        json={"username": "Apollo@123", "password": "WrongMasterPassword@123"},
+        json={"username": TEST_MASTER_USERNAME, "password": "WrongMasterPassword@123"},
     )
     assert response.status_code == 401
     assert "Invalid username or password" in response.json()["detail"]
@@ -52,7 +53,7 @@ def test_no_default_demo_accounts_exist_after_fresh_initialization(client: TestC
     assert "staff1" not in usernames
     assert "staff2" not in usernames
     assert "staff3" not in usernames
-    assert "apollo@123" in usernames
+    assert TEST_MASTER_USERNAME.lower() in usernames
 
 
 def test_master_can_create_staff_and_new_staff_can_login(client: TestClient, admin_headers: dict):

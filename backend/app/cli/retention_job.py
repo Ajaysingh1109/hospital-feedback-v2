@@ -1,12 +1,12 @@
 """
-Portable 48-Hour Retention Cleanup Job (CLI & Cron Entrypoint)
+Portable 12-Hour Retention Cleanup Job (CLI & Cron Entrypoint)
 
 Usage:
     python -m app.cli.retention_job
-    python -m app.cli.retention_job --hours 48
+    python -m app.cli.retention_job --hours 12
 
 Can be executed by:
-- Linux Crontab (e.g. `*/10 * * * * cd /app && python -m app.cli.retention_job`)
+- Linux Crontab (e.g. `0 * * * * cd /app && python -m app.cli.retention_job`)
 - Kubernetes CronJob
 - AWS ECS Scheduled Task / EventBridge
 - GCP Cloud Run Job
@@ -30,12 +30,12 @@ settings = get_settings()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hospital Feedback 48-Hour Data Retention & Purge Job")
+    parser = argparse.ArgumentParser(description="Hospital Feedback 12-Hour Data Retention & Purge Job")
     parser.add_argument(
         "--hours",
         type=int,
-        default=48,
-        help="Retention period in hours (default: 48)",
+        default=12,
+        help="Retention period in hours (default: 12)",
     )
     args = parser.parse_args()
 

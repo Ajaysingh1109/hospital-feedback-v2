@@ -98,6 +98,12 @@ class HODMappingOut(BaseModel):
         from_attributes = True
 
 
+class HODMappingCreate(BaseModel):
+    department_name: str
+    hod_name: str
+    is_active: Optional[bool] = True
+
+
 class HODMappingUpdate(BaseModel):
     hod_name: str
     is_active: Optional[bool] = True
@@ -160,8 +166,18 @@ class ProcessAudioResponse(BaseModel):
     suggested_action: str = "Not Provided"
     suggested_department: Optional[str] = None
     suggested_subcategory: Optional[str] = None
+    suggested_location: Optional[str] = None
     priority: str = "Not Specified"
     confidence_score: float = 1.0
+    field_provenance: Optional[Dict[str, str]] = None
+    diagnostics: Optional[Dict[str, Any]] = None
+
+
+class ProcessTextRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Raw speech or verbatim text input")
+    client_uuid: Optional[str] = None
+    language_hint: Optional[str] = None
+
 
 
 # ============================================================================
@@ -204,8 +220,10 @@ class FeedbackCreate(BaseModel):
     # AUDIO REFERENCE & CONSENT (SECTION 19)
     audio_file_id: Optional[str] = None
     ai_suggested_department: Optional[str] = None
+    suggested_location: Optional[str] = None
     consent_status: Optional[str] = "CONSENT_OBTAINED"
     consent_timestamp: Optional[datetime] = None
+    field_provenance: Optional[Dict[str, str]] = None
 
     @field_validator("uhid")
     @classmethod
@@ -290,14 +308,29 @@ class FeedbackOut(BaseModel):
     consent_status: str = "CONSENT_OBTAINED"
     consent_timestamp: Optional[datetime] = None
     status: str
+    processing_error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     retention_expires_at: Optional[datetime] = None
     retention_expiry_str: Optional[str] = None
+    audio_expires_at: Optional[datetime] = None
+    audio_expiry_str: Optional[str] = None
+    is_audio_expired: bool = False
     corrections: List[FeedbackCorrectionOut] = []
+    field_provenance: Optional[Dict[str, str]] = None
 
     class Config:
         from_attributes = True
+
+
+class AsyncFeedbackOut(BaseModel):
+    success: bool
+    feedback_id: str
+    client_uuid: str
+    status: str
+    message: str = "Saved — Processing in Background"
+    feedback: Optional[FeedbackOut] = None
+
 
 
 class BulkDeleteRequest(BaseModel):

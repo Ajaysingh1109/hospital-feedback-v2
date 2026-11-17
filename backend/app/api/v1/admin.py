@@ -37,6 +37,7 @@ from ...schemas import (
     FeedbackCorrectionRequest,
     FeedbackListOut,
     FeedbackOut,
+    HODMappingCreate,
     HODMappingOut,
     HODMappingUpdate,
     SchemeCreate,
@@ -412,10 +413,10 @@ def trigger_retention_purge(
     db: Session = Depends(get_db),
 ):
     """
-    Manually triggers the automatic 48-hour retention purge job.
+    Manually triggers the automatic 12-hour retention purge job.
     Admin/Master only.
     """
-    result = run_automatic_retention_purge(db=db, retention_hours=48)
+    result = run_automatic_retention_purge(db=db, retention_hours=12)
     return result
 
 
@@ -425,7 +426,7 @@ def cron_trigger_retention_purge(
     db: Session = Depends(get_db),
 ):
     """
-    Secure Webhook endpoint for Cloud Schedulers (AWS EventBridge, GCP Cloud Scheduler, K8s CronJob).
+    Secure Webhook endpoint for Cloud Schedulers (AWS EventBridge, GCP Cloud Scheduler, Render Cron, K8s CronJob).
     Can be authenticated by Header 'X-Cron-Key: <CRON_SECRET>' or Bearer Admin token.
     """
     cron_key = request.headers.get("X-Cron-Key")
@@ -449,7 +450,7 @@ def cron_trigger_retention_purge(
             detail="Unauthorized: valid X-Cron-Key or Admin Bearer token required.",
         )
 
-    result = run_automatic_retention_purge(db=db, retention_hours=48)
+    result = run_automatic_retention_purge(db=db, retention_hours=12)
     return result
 
 
@@ -711,6 +712,71 @@ def update_hod_mapping(
         },
     )
     return mapping
+
+
+@router.post("/hod-mappings", response_model=HODMappingOut, status_code=status.HTTP_201_CREATED)
+def create_hod_mapping(
+    body: HODMappingCreate,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    clean_dept = body.department_name.strip()
+    clean_hod = body.hod_name.strip()
+    if not clean_dept or not clean_hod:
+        raise HTTPException(status_code=400, detail="Department name and HOD name are required.")
+
+    existing = db.scalar(select(HODMapping).where(func.lower(HODMapping.department_name) == clean_dept.lower()))
+    if existing:
+        existing.hod_name = clean_hod
+        existing.is_active = body.is_active if body.is_active is not None else True
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    mapping = HODMapping(
+        department_name=clean_dept,
+        hod_name=clean_hod,
+        is_active=body.is_active if body.is_active is not None else True,
+    )
+    db.add(mapping)
+    db.commit()
+    db.refresh(mapping)
+
+    log_audit(
+        db=db,
+        action="HOD_MAPPING_CREATE",
+        entity_type="HODMapping",
+        actor_username=current_user.username,
+        actor_id=current_user.id,
+        entity_id=str(mapping.id),
+        details={"department": clean_dept, "hod": clean_hod},
+    )
+    return mapping
+
+
+@router.post("/hod-mappings/restore-defaults", response_model=List[HODMappingOut])
+def restore_default_hod_mappings(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    from ...services.hod_service import STANDARD_HOD_BY_DEPT
+    for dept_name, hod_name in STANDARD_HOD_BY_DEPT.items():
+        mapping = db.scalar(select(HODMapping).where(func.lower(HODMapping.department_name) == dept_name.lower()))
+        if mapping:
+            mapping.hod_name = hod_name
+            mapping.is_active = True
+        else:
+            db.add(HODMapping(department_name=dept_name, hod_name=hod_name, is_active=True))
+    db.commit()
+
+    log_audit(
+        db=db,
+        action="HOD_MAPPINGS_RESTORE_DEFAULTS",
+        entity_type="HODMapping",
+        actor_username=current_user.username,
+        actor_id=current_user.id,
+    )
+    return db.query(HODMapping).order_by(HODMapping.department_name).all()
 
 
 @router.get("/schemes", response_model=List[SchemeOut])

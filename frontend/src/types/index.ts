@@ -51,8 +51,11 @@ export interface ProcessAudioResult {
   suggested_action: string;
   suggested_department?: string;
   suggested_subcategory?: string;
+  suggested_location?: string;
   priority: string;
   confidence_score: number;
+  field_provenance?: Record<string, string>;
+  diagnostics?: Record<string, any>;
 }
 
 export interface FeedbackCorrection {
@@ -108,11 +111,42 @@ export interface FeedbackRecord {
   // Metadata
   ai_suggested_department?: string;
   status: string;
+  processing_error?: string | null;
   retention_expires_at?: string;
   retention_expiry_str?: string;
+  audio_expires_at?: string;
+  audio_expiry_str?: string;
+  is_audio_expired?: boolean;
   created_at: string;
   updated_at: string;
   corrections: FeedbackCorrection[];
+  field_provenance?: Record<string, string>;
+}
+
+export interface AsyncFeedbackOut {
+  success: boolean;
+  feedback_id: string;
+  client_uuid: string;
+  status: string;
+  message: string;
+  feedback?: FeedbackRecord;
+}
+
+export interface QueueJobItem {
+  feedback_id: string;
+  client_uuid: string;
+  status: string;
+  processing_error?: string | null;
+  time_str: string;
+  created_at: string;
+  uhid_short: string;
+}
+
+export interface QueueStatusResponse {
+  processing_count: number;
+  completed_count: number;
+  needs_review_count: number;
+  items: QueueJobItem[];
 }
 
 export interface FeedbackListResponse {

@@ -21,12 +21,21 @@ def get_ai_providers() -> Tuple[STTProvider, TranslationProvider, LLMProvider]:
     settings = get_settings()
     provider_name = (settings.AI_PROVIDER or "").lower().strip()
 
-    if provider_name == "gemini" and settings.GEMINI_API_KEY:
-        logger.info("[AI Factory] Operating in REAL AI MODE with Google Gemini.")
-        gemini = GeminiAIProvider(api_key=settings.GEMINI_API_KEY)
+    if provider_name == "gemini":
+        if not settings.GEMINI_API_KEY:
+            logger.error("[AI Factory] REQUIRED: Google Gemini API key is missing in configuration.")
+            raise RuntimeError("REQUIRED: Google Gemini API key. GEMINI_API_KEY is not configured.")
+        logger.info(f"[AI Factory] Operating in REAL AI MODE with Google Gemini ({settings.GEMINI_MODEL}).")
+        gemini = GeminiAIProvider(
+            api_key=settings.GEMINI_API_KEY,
+            model_name=settings.GEMINI_MODEL,
+        )
         return gemini, gemini, gemini
 
-    if provider_name == "openai" and settings.OPENAI_API_KEY:
+    if provider_name == "openai":
+        if not settings.OPENAI_API_KEY:
+            logger.error("[AI Factory] REQUIRED: OpenAI API key is missing in configuration.")
+            raise RuntimeError("REQUIRED: OpenAI API key. OPENAI_API_KEY is not configured.")
         logger.info("[AI Factory] Operating in REAL AI MODE with OpenAI (Whisper + GPT).")
         openai_p = OpenAIProvider(api_key=settings.OPENAI_API_KEY)
         return openai_p, openai_p, openai_p
@@ -42,7 +51,7 @@ def get_active_ai_mode() -> str:
     settings = get_settings()
     p = (settings.AI_PROVIDER or "").lower().strip()
     if p == "gemini" and settings.GEMINI_API_KEY:
-        return "REAL AI MODE (Gemini)"
+        return f"REAL AI MODE (Gemini - {settings.GEMINI_MODEL})"
     if p == "openai" and settings.OPENAI_API_KEY:
         return "REAL AI MODE (OpenAI)"
     return "MOCK/TEST MODE"

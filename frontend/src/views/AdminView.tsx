@@ -22,6 +22,9 @@ import {
   Sparkles,
   TrendingUp,
   Clock,
+  PlusCircle,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import {
   bulkDeleteFeedback,
@@ -31,6 +34,7 @@ import {
   downloadExcel,
   fetchAdminAnalytics,
   fetchAdminFeedback,
+  fetchAudioBlob,
   fetchAuditLogs,
   fetchHODMappings,
   fetchMasterData,
@@ -39,6 +43,8 @@ import {
   getFeedbackDetail,
   triggerRetentionPurge,
   updateHODMapping,
+  createHODMapping,
+  restoreDefaultHODMappings,
   updateSetting,
   updateUser,
   resetUserPassword,
@@ -77,6 +83,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [selectedFeedback, setSelectedFeedback] = useState<FeedbackRecord | null>(null);
   const [showDetailModal, setShowDetailModal] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioLoading, setAudioLoading] = useState<boolean>(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     department: "",
     complaint_summary: "",
@@ -88,6 +97,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [masterData, setMasterData] = useState<MasterData | null>(null);
   const [usersList, setUsersList] = useState<UserType[]>([]);
   const [hodMappings, setHodMappings] = useState<any[]>([]);
+  const [editingHodId, setEditingHodId] = useState<number | null>(null);
+  const [editingHodName, setEditingHodName] = useState<string>("");
+  const [showAddHodModal, setShowAddHodModal] = useState<boolean>(false);
+  const [newHodDept, setNewHodDept] = useState<string>("");
+  const [newHodName, setNewHodName] = useState<string>("");
   const [systemSettings, setSystemSettings] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
 
@@ -179,6 +193,12 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   };
 
   const handleOpenDetail = async (fb: FeedbackRecord) => {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      setAudioUrl(null);
+    }
+    setAudioLoading(false);
+    setAudioError(null);
     setSelectedFeedback(fb);
     setEditForm({
       department: fb.department,
@@ -188,6 +208,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     });
     setIsEditing(false);
     setShowDetailModal(true);
+  };
+
+  const handleCloseDetail = () => {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      setAudioUrl(null);
+    }
+    setAudioLoading(false);
+    setAudioError(null);
+    setShowDetailModal(false);
   };
 
   const handleSaveCorrection = async () => {
@@ -251,7 +281,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   };
 
   const handleTriggerPurge = async () => {
-    if (!confirm("Run 48-hour retention cleanup now? Any records older than 48 hours will be permanently deleted.")) return;
+    if (!confirm("Run 12-hour retention cleanup now? Any records older than 12 hours will be permanently deleted.")) return;
     try {
       const res = await triggerRetentionPurge();
       alert(`Retention Purge Complete!\nPurged records: ${res.purged_count}\nEligible: ${res.total_eligible}`);
@@ -295,6 +325,41 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     setHodMappings(mappings);
   };
 
+  const handleSaveHod = async (id: number) => {
+    if (!editingHodName.trim()) return;
+    try {
+      await updateHODMapping(id, editingHodName.trim());
+      setEditingHodId(null);
+      loadMasterDataTab();
+    } catch (e: any) {
+      alert("Failed to update HOD: " + (e?.message || e));
+    }
+  };
+
+  const handleAddHodMapping = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newHodDept.trim() || !newHodName.trim()) return;
+    try {
+      await createHODMapping(newHodDept.trim(), newHodName.trim());
+      setShowAddHodModal(false);
+      setNewHodDept("");
+      setNewHodName("");
+      loadMasterDataTab();
+    } catch (e: any) {
+      alert("Failed to add HOD mapping: " + (e?.message || e));
+    }
+  };
+
+  const handleRestoreDefaultHods = async () => {
+    if (!confirm("Restore all departments to canonical default HOD assignments?")) return;
+    try {
+      await restoreDefaultHODMappings();
+      loadMasterDataTab();
+    } catch (e: any) {
+      alert("Failed to restore default HODs: " + (e?.message || e));
+    }
+  };
+
   const loadSettingsTab = async () => {
     const sets = await fetchSettings();
     setSystemSettings(sets);
@@ -307,6 +372,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      {/* Master Brand Header (Section 6 & 24) */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2 border-b border-slate-200">
+        <div>
+          <span className="text-[10px] font-black uppercase tracking-widest text-teal-700 block">
+            Powered by Saarthi-One
+          </span>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+            FEEDBACK MAC — Master Dashboard
+          </h1>
+          <p className="text-xs text-slate-500 font-medium mt-0.5">
+            Centralized Patient Feedback Governance, Analytics & 11-Column Excel Export
+          </p>
+        </div>
+      </div>
+
       {/* Top Navigation Tabs */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -402,7 +482,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
         <div className="flex items-center gap-2.5">
           <span className="py-2 px-3 bg-amber-50 text-amber-900 border border-amber-300 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-xs">
             <Clock className="w-4 h-4 text-amber-600" />
-            Retention: 48 hours
+            Retention: 12 hours
           </span>
           <button
             onClick={handleExportExcel}
@@ -414,15 +494,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
         </div>
       </div>
 
-      {/* 48-Hour Retention Warning Banner */}
+      {/* 12-Hour Retention Warning Banner */}
       <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3 text-amber-900 shadow-xs">
         <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
         <div className="text-xs space-y-1">
           <p className="font-extrabold text-amber-950">
-            ⚠️ Feedback data is automatically deleted after 48 hours. Export required data before the retention period expires.
+            ⚠️ Feedback data is automatically deleted after 12 hours. Export required data before the retention period expires.
           </p>
           <p className="text-amber-800 opacity-90">
-            Complaints, audio recordings, transcripts, and patient details are permanently wiped 48 hours post-submission in strict accordance with hospital data governance.
+            Complaints, audio recordings, transcripts, and patient details are permanently wiped 12 hours post-submission in strict accordance with hospital data governance.
           </p>
         </div>
       </div>
@@ -644,7 +724,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
                           />
                         </td>
-                        <td className="py-3 px-4 font-mono font-bold text-sky-700">{fb.feedback_id}</td>
+                        <td className="py-3 px-4 font-mono font-bold text-sky-700">
+                          <div className="flex items-center gap-1.5">
+                            <span>{fb.feedback_id}</span>
+                            {fb.has_audio && !fb.is_audio_expired && (
+                              <span title="Voice recording available for ground truth review">
+                                <Volume2 className="w-3.5 h-3.5 text-sky-600" />
+                              </span>
+                            )}
+                            {fb.is_audio_expired && (
+                              <span title="Voice recording expired & permanently deleted">
+                                <VolumeX className="w-3.5 h-3.5 text-slate-300" />
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-3 px-3 whitespace-nowrap text-slate-500">
                           <div>{fb.date_str} {fb.time_str}</div>
                           {fb.retention_expiry_str && (
@@ -906,41 +1000,169 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       )}
 
       {/* ==================================================================== */}
-      {/* 4. HOD MAPPINGS TAB (SECTION 23 & 24) */}
+      {/* 4. HOD MAPPINGS TAB (CONFIGURABLE MASTER DATA) */}
       {/* ==================================================================== */}
       {activeTab === "master" && (
         <div className="space-y-4 animate-fade-in">
-          <div>
-            <h3 className="text-base font-extrabold text-slate-900">Deterministic HOD Master Mappings</h3>
-            <p className="text-xs text-slate-500">Fixed hospital business rule: Backend resolves HOD deterministically.</p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900">Department → HOD Master Configuration</h3>
+              <p className="text-xs text-slate-500">
+                Master can update HOD assignments, add custom departments, or restore canonical defaults without code redeployment.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRestoreDefaultHods}
+                className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Restore Defaults
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddHodModal(true)}
+                className="py-2 px-3.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                Add Department HOD
+              </button>
+            </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                   <th className="py-3 px-4">Department</th>
-                  <th className="py-3 px-4">Deterministic Assigned HOD</th>
-                  <th className="py-3 px-4 text-right">Last Updated</th>
+                  <th className="py-3 px-4">Assigned HOD</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {hodMappings.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50">
-                    <td className="py-3 px-4 font-bold text-slate-900">{m.department_name}</td>
-                    <td className="py-3 px-4">
-                      <span className="font-extrabold text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
-                        {m.hod_name}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right text-slate-400">
-                      {new Date(m.updated_at).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
+                {hodMappings.map((m) => {
+                  const isEditing = editingHodId === m.id;
+                  return (
+                    <tr key={m.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-3 px-4 font-bold text-slate-900">{m.department_name}</td>
+                      <td className="py-3 px-4">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editingHodName}
+                              onChange={(e) => setEditingHodName(e.target.value)}
+                              placeholder="e.g. Tanveer Sir"
+                              className="px-2.5 py-1.5 bg-slate-50 border border-teal-500 rounded-lg text-xs font-bold text-teal-900 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveHod(m.id)}
+                              className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs rounded-lg shadow-2xs"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingHodId(null)}
+                              className="px-2 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-lg"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="font-extrabold text-teal-800 bg-teal-50 px-2.5 py-1 rounded-lg border border-teal-200">
+                            {m.hod_name}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                            m.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {m.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {!isEditing && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingHodId(m.id);
+                              setEditingHodName(m.hod_name);
+                            }}
+                            className="py-1 px-2.5 bg-slate-100 hover:bg-teal-50 hover:text-teal-700 text-slate-600 font-bold text-xs rounded-lg transition"
+                          >
+                            Edit HOD
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+
+          {/* Add Department HOD Modal */}
+          {showAddHodModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in">
+              <div className="w-full max-w-md bg-white rounded-3xl p-6 shadow-2xl border border-slate-200">
+                <h3 className="text-base font-bold text-slate-900 mb-1">Add Department HOD Assignment</h3>
+                <p className="text-xs text-slate-500 mb-4">Assign an HOD to a hospital department.</p>
+
+                <form onSubmit={handleAddHodMapping} className="space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Department Name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newHodDept}
+                      onChange={(e) => setNewHodDept(e.target.value)}
+                      placeholder="e.g. Oncology, Cardiology, Security"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                      Assigned HOD Name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newHodName}
+                      onChange={(e) => setNewHodName(e.target.value)}
+                      placeholder="e.g. Dr. Rajesh Sir, Asha Ma'am"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="submit"
+                      className="flex-1 py-2.5 bg-teal-700 hover:bg-teal-800 text-white font-bold rounded-xl text-xs shadow-sm transition"
+                    >
+                      Save HOD Assignment
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddHodModal(false)}
+                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -974,16 +1196,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
             ))}
           </div>
 
-          {/* Automated 48-Hour Data Retention & Cleanup Card */}
+          {/* Automated 12-Hour Data Retention & Cleanup Card */}
           <div className="bg-white rounded-3xl border border-amber-200 p-6 space-y-4 shadow-xs">
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                   <Clock className="w-4 h-4 text-amber-600" />
-                  Automated 48-Hour Data Retention Policy
+                  Automated 12-Hour Data Retention Policy
                 </h4>
                 <p className="text-xs text-slate-500 mt-1">
-                  Enforces strict patient privacy: all patient recordings, transcripts, AI summaries, and identifiers are permanently purged after 48 hours.
+                  Enforces strict patient privacy: all patient recordings, transcripts, AI summaries, and identifiers are permanently purged after 12 hours.
                 </p>
               </div>
               <span className="py-1 px-3 bg-emerald-100 text-emerald-800 rounded-full text-xs font-bold">
@@ -993,7 +1215,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
 
             <div className="flex items-center justify-between pt-3 border-t border-slate-100">
               <span className="text-xs text-slate-600">
-                Retention Window: <strong className="text-slate-900">48 Hours Fixed</strong>
+                Retention Window: <strong className="text-slate-900">12 Hours Fixed</strong>
               </span>
               <button
                 type="button"
@@ -1070,7 +1292,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 </h3>
               </div>
               <button
-                onClick={() => setShowDetailModal(false)}
+                onClick={handleCloseDetail}
                 className="text-white hover:bg-white/20 p-2 rounded-xl transition font-bold"
               >
                 ✕
@@ -1096,6 +1318,117 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   <span className="text-slate-400 block">Staff User</span>
                   <span className="font-bold text-slate-800">{selectedFeedback.staff_name}</span>
                 </div>
+              </div>
+
+              {/* TEMPORARY VOICE RECORDING / GROUND TRUTH REVIEW */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Volume2 className="w-4 h-4 text-sky-600" />
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Temporary Voice Recording (Ground Truth)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                    <Clock className="w-3 h-3 text-amber-600" />
+                    <span className="text-[10px] font-bold text-amber-800">
+                      12-Hour Governance Rule
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-600 bg-sky-50/70 p-3 rounded-xl border border-sky-100 flex items-start gap-2">
+                  <Shield className="w-4 h-4 text-sky-600 mt-0.5 flex-shrink-0" />
+                  <span>
+                    The original voice recording is temporarily preserved on private server storage for 12 hours from submission as ground truth to verify disputed transcription, speech quality, or English translation. It is never exposed publicly and is permanently purged thereafter.
+                  </span>
+                </div>
+
+                {/* Status & Expiry Bar */}
+                <div className="flex items-center justify-between bg-white p-3 rounded-xl border border-slate-200 text-xs">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Audio Retention Expiry</span>
+                    <span className="font-semibold text-slate-800">
+                      {selectedFeedback.retention_expiry_str || selectedFeedback.audio_expiry_str || "12 hours post-submission"}
+                    </span>
+                  </div>
+                  <div>
+                    {selectedFeedback.is_audio_expired ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-red-100 text-red-700 font-bold rounded-lg text-xs">
+                        <VolumeX className="w-3.5 h-3.5" /> Expired & Purged
+                      </span>
+                    ) : selectedFeedback.has_audio ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-800 font-bold rounded-lg text-xs">
+                        <Volume2 className="w-3.5 h-3.5" /> Recording Available
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-600 font-medium rounded-lg text-xs">
+                        No Voice Audio / Direct Text
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Player or Action */}
+                {selectedFeedback.has_audio && !selectedFeedback.is_audio_expired && (
+                  <div className="pt-1">
+                    {audioUrl ? (
+                      <div className="space-y-2 bg-white p-3 rounded-xl border border-sky-200">
+                        <div className="flex items-center justify-between text-[11px] text-sky-900 font-bold">
+                          <span>Secure Stream: {selectedFeedback.feedback_id} ({selectedFeedback.duration_seconds || 0}s)</span>
+                          <button
+                            onClick={() => {
+                              if (audioUrl) URL.revokeObjectURL(audioUrl);
+                              setAudioUrl(null);
+                            }}
+                            className="text-slate-400 hover:text-slate-600 underline font-medium text-[10px]"
+                          >
+                            Close Player
+                          </button>
+                        </div>
+                        <audio controls autoPlay className="w-full h-9 rounded-lg" src={audioUrl}>
+                          Your browser does not support audio playback.
+                        </audio>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={async () => {
+                            setAudioLoading(true);
+                            setAudioError(null);
+                            try {
+                              const blob = await fetchAudioBlob(selectedFeedback.feedback_id);
+                              const url = URL.createObjectURL(blob);
+                              setAudioUrl(url);
+                            } catch (err: any) {
+                              setAudioError(err?.message || "Failed to load audio recording.");
+                            } finally {
+                              setAudioLoading(false);
+                            }
+                          }}
+                          disabled={audioLoading}
+                          className="flex items-center gap-2 py-2 px-4 bg-sky-700 hover:bg-sky-800 disabled:bg-slate-300 text-white font-bold rounded-xl text-xs transition shadow-xs"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          {audioLoading ? "Loading Secure Stream..." : "Listen to Ground Truth Audio"}
+                        </button>
+                        {audioError && (
+                          <span className="text-xs text-red-600 font-medium flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            {audioError}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {selectedFeedback.is_audio_expired && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs font-medium flex items-center gap-2">
+                    <VolumeX className="w-4 h-4 flex-shrink-0" />
+                    <span>Audio recording expired (&gt;12 hours) and has been permanently deleted from storage per hospital data retention policy.</span>
+                  </div>
+                )}
               </div>
 
               {/* Transcripts */}
@@ -1212,7 +1545,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                   Delete Complaint Permanently
                 </button>
                 <button
-                  onClick={() => setShowDetailModal(false)}
+                  onClick={handleCloseDetail}
                   className="py-2.5 px-5 bg-slate-100 hover:bg-slate-200 font-bold text-xs text-slate-700 rounded-xl transition"
                 >
                   Close

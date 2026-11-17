@@ -207,14 +207,14 @@ def test_05_bulk_delete_empty_list_rejected(client: TestClient, admin_headers: d
 
 
 # ============================================================================
-# 3. 48-HOUR RETENTION BOUNDARY
+# 3. 12-HOUR RETENTION BOUNDARY
 # ============================================================================
 
 def test_06_retention_expiry_calculation_and_string(client: TestClient, admin_headers: dict, db_session: Session):
-    """Test retention expiry timestamp is exact created_at + 48 hours and returned in API."""
+    """Test retention expiry timestamp is exact created_at + 12 hours and returned in API."""
     fb = _create_sample_feedback(db_session, uhid="UHID-EXPIRY-01")
     expected_expiry = calculate_retention_expiry(fb.created_at)
-    assert expected_expiry == fb.created_at.replace(tzinfo=timezone.utc) + timedelta(hours=48)
+    assert expected_expiry == fb.created_at.replace(tzinfo=timezone.utc) + timedelta(hours=12)
 
     res = client.get(f"/api/v1/admin/feedback/{fb.feedback_id}", headers=admin_headers)
     assert res.status_code == 200
@@ -224,24 +224,24 @@ def test_06_retention_expiry_calculation_and_string(client: TestClient, admin_he
     assert data["retention_expiry_str"] is not None
 
 
-def test_07_retention_boundary_under_48h_not_purged(db_session: Session):
-    """Feedback created 47 hours ago is within 48h window and NOT purged."""
-    fb = _create_sample_feedback(db_session, uhid="UHID-UNDER-48H", hours_ago=47.0)
+def test_07_retention_boundary_under_12h_not_purged(db_session: Session):
+    """Feedback created 11.5 hours ago is within 12h window and NOT purged."""
+    fb = _create_sample_feedback(db_session, uhid="UHID-UNDER-12H", hours_ago=11.5)
     fb_id = fb.feedback_id
 
-    result = run_automatic_retention_purge(db=db_session, retention_hours=48)
+    result = run_automatic_retention_purge(db=db_session, retention_hours=12)
     assert result["status"] == "SUCCESS"
 
     remaining = db_session.query(Feedback).filter(Feedback.feedback_id == fb_id).first()
     assert remaining is not None
 
 
-def test_08_retention_boundary_over_48h_purged(db_session: Session):
-    """Feedback created 49 hours ago has expired and IS automatically purged."""
-    fb = _create_sample_feedback(db_session, uhid="UHID-OVER-48H", hours_ago=49.0)
+def test_08_retention_boundary_over_12h_purged(db_session: Session):
+    """Feedback created 12.5 hours ago has expired and IS automatically purged."""
+    fb = _create_sample_feedback(db_session, uhid="UHID-OVER-12H", hours_ago=12.5)
     fb_id = fb.feedback_id
 
-    result = run_automatic_retention_purge(db=db_session, retention_hours=48)
+    result = run_automatic_retention_purge(db=db_session, retention_hours=12)
     assert result["status"] == "SUCCESS"
     assert result["purged_count"] >= 1
 
@@ -265,12 +265,12 @@ def test_09_manual_delete_unlinks_audio_file(db_session: Session):
 
 
 def test_10_auto_purge_unlinks_audio_file(db_session: Session):
-    """Automatic 48h purge permanently unlinks the audio file from disk."""
-    fb = _create_sample_feedback(db_session, uhid="UHID-AUDIO-AUTO", hours_ago=50.0, has_audio_file=True)
+    """Automatic 12h purge permanently unlinks the audio file from disk."""
+    fb = _create_sample_feedback(db_session, uhid="UHID-AUDIO-AUTO", hours_ago=15.0, has_audio_file=True)
     audio_path = Path(fb.audio.file_path)
     assert audio_path.exists()
 
-    result = run_automatic_retention_purge(db=db_session, retention_hours=48)
+    result = run_automatic_retention_purge(db=db_session, retention_hours=12)
     assert result["purged_count"] >= 1
     assert not audio_path.exists()
 
@@ -281,10 +281,10 @@ def test_10_auto_purge_unlinks_audio_file(db_session: Session):
 
 def test_11_audit_log_sanitization_on_purge(db_session: Session):
     """Historical audit logs have patient identifiers and complaints stripped on purge."""
-    fb = _create_sample_feedback(db_session, uhid="UHID-SANITIZE-99", hours_ago=52.0)
+    fb = _create_sample_feedback(db_session, uhid="UHID-SANITIZE-99", hours_ago=15.0)
     fb_id = fb.feedback_id
 
-    run_automatic_retention_purge(db=db_session, retention_hours=48)
+    run_automatic_retention_purge(db=db_session, retention_hours=12)
 
     # Check historical logs for this feedback
     logs = db_session.query(AuditLog).filter(AuditLog.entity_id == fb_id).all()
@@ -298,10 +298,10 @@ def test_11_audit_log_sanitization_on_purge(db_session: Session):
 
 def test_12_clean_deletion_audit_event_logged(db_session: Session):
     """Purge records a clean FEEDBACK_DELETED or AUTO_PURGED audit event without sensitive details."""
-    fb = _create_sample_feedback(db_session, uhid="UHID-EVENT-TEST", hours_ago=55.0)
+    fb = _create_sample_feedback(db_session, uhid="UHID-EVENT-TEST", hours_ago=15.0)
     fb_id = fb.feedback_id
 
-    run_automatic_retention_purge(db=db_session, retention_hours=48)
+    run_automatic_retention_purge(db=db_session, retention_hours=12)
 
     purge_event = (
         db_session.query(AuditLog)
@@ -395,13 +395,13 @@ def test_15_excel_export_retains_exactly_11_columns(
 
 def test_16_retention_purge_idempotent(db_session: Session):
     """Re-running the retention cleanup multiple times is safe and idempotent."""
-    _create_sample_feedback(db_session, uhid="UHID-IDEMP-01", hours_ago=60.0)
+    _create_sample_feedback(db_session, uhid="UHID-IDEMP-01", hours_ago=15.0)
 
-    res1 = run_automatic_retention_purge(db=db_session, retention_hours=48)
+    res1 = run_automatic_retention_purge(db=db_session, retention_hours=12)
     assert res1["purged_count"] >= 1
 
     # Second run should have 0 eligible and complete cleanly
-    res2 = run_automatic_retention_purge(db=db_session, retention_hours=48)
+    res2 = run_automatic_retention_purge(db=db_session, retention_hours=12)
     assert res2["status"] == "SUCCESS"
     assert res2["purged_count"] == 0
     assert res2["failed_count"] == 0
@@ -413,14 +413,14 @@ def test_17_offline_unsynced_feedback_safety(db_session: Session):
     retention job. Server auto-purge strictly evaluates server database entries.
     """
     # Simulate server-side cleanup running while an offline draft exists on client
-    res = run_automatic_retention_purge(db=db_session, retention_hours=48)
+    res = run_automatic_retention_purge(db=db_session, retention_hours=12)
     assert res["status"] == "SUCCESS"
     # Validates server does not touch offline client storage
 
 
 def test_18_cron_webhook_retention_purge(client: TestClient, db_session: Session):
     """Cloud scheduler webhook triggers purge with secure X-Cron-Key header."""
-    _create_sample_feedback(db_session, uhid="UHID-WEBHOOK-EXPIRED", hours_ago=50.0)
+    _create_sample_feedback(db_session, uhid="UHID-WEBHOOK-EXPIRED", hours_ago=15.0)
 
     # 1. Without header -> 401 Unauthorized
     unauth = client.post("/api/v1/admin/retention/cron-trigger")
@@ -447,6 +447,6 @@ def test_18_cron_webhook_retention_purge(client: TestClient, db_session: Session
 def test_19_cli_retention_job_execution(db_session: Session):
     """Verifies that the standalone CLI entrypoint executes cleanly without exceptions."""
     from app.cli.retention_job import run_automatic_retention_purge
-    result = run_automatic_retention_purge(db=db_session, retention_hours=48)
+    result = run_automatic_retention_purge(db=db_session, retention_hours=12)
     assert result["status"] == "SUCCESS"
     assert "purged_count" in result

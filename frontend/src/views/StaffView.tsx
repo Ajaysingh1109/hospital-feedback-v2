@@ -23,11 +23,19 @@ import {
   Cpu,
   Wifi,
   WifiOff,
+  X,
+  RefreshCw,
+  Clock,
+  Loader2,
+  Layers,
 } from "lucide-react";
 import {
   fetchMasterData,
   fetchMySubmissions,
+  fetchQueueStatus,
   processAudio,
+  processText,
+  submitAsyncFeedback,
   submitFeedback,
 } from "../services/api";
 import {
@@ -42,6 +50,8 @@ import {
   MasterData,
   OfflineFeedbackItem,
   ProcessAudioResult,
+  QueueJobItem,
+  QueueStatusResponse,
   SessionDraft,
   User as UserType,
 } from "../types";
@@ -77,17 +87,34 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
   const [offlineItems, setOfflineItems] = useState<OfflineFeedbackItem[]>([]);
   const [recoveredDraft, setRecoveredDraft] = useState<SessionDraft | null>(null);
 
+  // Background Processing Queue & Notification State (Section 2, 7)
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [showQueueDrawer, setShowQueueDrawer] = useState<boolean>(false);
+  const [queueStatus, setQueueStatus] = useState<QueueStatusResponse>({
+    processing_count: 0,
+    completed_count: 0,
+    needs_review_count: 0,
+    items: [],
+  });
+
   // Active Session State
   const [sessionId, setSessionId] = useState<string>("");
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const audioBlobRef = useRef<Blob | null>(null);
   const [recordingDuration, setRecordingDuration] = useState<number>(0);
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [recordingWarning, setRecordingWarning] = useState<string | null>(null);
   const timerRef = useRef<any>(null);
+
+  // Developer / Test Mode State (Section 9)
+  const [developerText, setDeveloperText] = useState<string>(
+    "GW1 ke patient ko subah se breakfast nahi mila aur attendant bol raha hai ki abhi tak nahi aaya."
+  );
+  const [showDevTextMode, setShowDevTextMode] = useState<boolean>(false);
 
   // Consent tracking (Section 19)
   const [consentTimestamp, setConsentTimestamp] = useState<string>("");
@@ -159,6 +186,22 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
     };
   }, [isRecording]);
 
+  const refreshQueueStatus = async () => {
+    if (!isOnline) return;
+    try {
+      const q = await fetchQueueStatus();
+      setQueueStatus(q);
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    if (isOnline) {
+      refreshQueueStatus();
+      const interval = setInterval(refreshQueueStatus, 6000);
+      return () => clearInterval(interval);
+    }
+  }, [isOnline]);
+
   const loadInitialData = async () => {
     try {
       const md = await fetchMasterData();
@@ -166,6 +209,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       if (isOnline) {
         const subs = await fetchMySubmissions();
         setTodaySubmissions(subs);
+        refreshQueueStatus();
       }
       const queue = await getOfflineQueueItems();
       setOfflineItems(queue);
@@ -216,7 +260,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
   const handleConsentAgreed = () => {
     setShowConsentModal(false);
     setConsentTimestamp(new Date().toISOString());
-    setStep("record");
+    setStep("details");
   };
 
   const handleConsentCancelled = () => {
@@ -230,6 +274,23 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
 
   const startRecording = async () => {
     setRecordingWarning(null);
+    audioBlobRef.current = null;
+    setAudioBlob(null);
+    setAudioChunks([]);
+    console.log("VOICE_DEBUG: recording_started=true");
+
+    // Secure HTTPS Pre-flight check (Section 9 & Fix 9)
+    const isInsecureNonLocalhost =
+      window.location.protocol === "http:" &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1";
+
+    if (isInsecureNonLocalhost) {
+      alert("Secure HTTPS connection is required for microphone recording.");
+      setRecordingWarning("Secure HTTPS connection is required for microphone recording.");
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -255,9 +316,15 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
 
       recorder.onstop = () => {
         const fullBlob = new Blob(chunks, { type: "audio/webm" });
+        audioBlobRef.current = fullBlob;
         setAudioBlob(fullBlob);
         setAudioChunks(chunks);
+        console.log(`VOICE_DEBUG: recorder_onstop mime_type=${fullBlob.type} size_bytes=${fullBlob.size}`);
         stream.getTracks().forEach((track) => track.stop());
+        setStatusBadge("IDLE");
+        if (step === "record") {
+          setStep("details");
+        }
       };
 
       recorder.start(250);
@@ -272,12 +339,9 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       }, 1000);
     } catch (err: any) {
       console.warn("Microphone access failed:", err);
-      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-        alert("Microphone permission was denied. Please allow microphone access in your browser settings to record patient conversations.");
-        return;
-      }
-      // Simulation mode for headless test runs
-      simulateRecording();
+      alert("Microphone permission was denied or microphone unavailable. Please allow microphone access in your browser settings to record audio.");
+      setIsRecording(false);
+      setStatusBadge("IDLE");
     }
   };
 
@@ -301,98 +365,65 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
     }
   };
 
-  const stopAndProcessRecording = () => {
+  const stopRecording = () => {
     clearInterval(timerRef.current);
     setIsRecording(false);
     setIsPaused(false);
+    setStatusBadge("IDLE");
 
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
       mediaRecorder.stop();
     }
-
-    setTimeout(() => {
-      runProcessingPipeline();
-    }, 400);
   };
 
-  const simulateRecording = () => {
-    setIsRecording(true);
-    setStatusBadge("RECORDING");
+  const stopAndProcessRecording = () => {
+    stopRecording();
+  };
+
+  const discardRecording = () => {
+    clearInterval(timerRef.current);
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      try { mediaRecorder.stop(); } catch (_) {}
+    }
+    if (audioStream) {
+      audioStream.getTracks().forEach((t) => t.stop());
+    }
+    audioBlobRef.current = null;
+    setAudioBlob(null);
+    setAudioChunks([]);
     setRecordingDuration(0);
-    timerRef.current = setInterval(() => {
-      setRecordingDuration((prev) => prev + 1);
-    }, 1000);
+    setIsRecording(false);
+    setIsPaused(false);
+    setStatusBadge("IDLE");
   };
 
   // ============================================================================
   // PROCESSING PIPELINE & AUDIO QUALITY CHECK (SECTION 3 & 49)
   // ============================================================================
 
-  const runProcessingPipeline = async () => {
-    setStep("processing");
-    setStatusBadge("PROCESSING");
-
-    // Audio Quality Check (Section 3 & 50)
-    if (recordingDuration < 2 && (!audioBlob || audioBlob.size < 1200)) {
-      setLowAudioMessage("Recording duration is under 2 seconds. Audio quality appears very low or silent.");
-      setShowLowAudioModal(true);
-      return;
-    }
-
-    proceedWithAIAnalysis();
-  };
-
-  const proceedWithAIAnalysis = async () => {
-    setShowLowAudioModal(false);
+  const proceedWithCapturedBlob = async (blob: Blob) => {
     setStep("processing");
     setStatusBadge("PROCESSING");
     setProcessingError(null);
 
-    setProcessingStatus("Uploading audio recording...");
-    await new Promise((r) => setTimeout(r, 300));
+    // Audio Quality Check
+    if (blob.size < 1500) {
+      setLowAudioMessage(`Audio is silent or too short (${blob.size} bytes). Please record again speaking clearly into the microphone.`);
+      setShowLowAudioModal(true);
+      return;
+    }
 
-    setProcessingStatus("Transcribing conversation (Hindi / Hinglish / English)...");
-    await new Promise((r) => setTimeout(r, 400));
-
-    setProcessingStatus("Translating to English & preserving clinical nuance...");
-    await new Promise((r) => setTimeout(r, 400));
-
-    setProcessingStatus("Extracting structured complaint & suggesting department...");
-
-    const activeBlob =
-      audioBlob ||
-      new Blob(
-        [
-          new Uint8Array([
-            0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
-          ]),
-        ],
-        { type: "audio/webm" }
-      );
+    setProcessingStatus(`Uploading audio recording (${Math.round(blob.size / 1024)} KB)...`);
+    console.log(`VOICE_DEBUG: upload_started=true size_bytes=${blob.size}`);
 
     try {
       if (isOnline) {
-        const result = await processAudio(activeBlob, sessionId);
+        setProcessingStatus("Transcribing conversation (Hindi / Hinglish / English)...");
+        const result = await processAudio(blob, sessionId);
         setAiResult(result);
-
-        const initialComplaint = result.complaint || result.english_translation || result.complaint_summary || "";
-
-        setFormData((prev) => ({
-          ...prev,
-          department: result.suggested_department || prev.department,
-          subcategory: result.suggested_subcategory || prev.subcategory,
-          complaint: initialComplaint || prev.complaint,
-          complaint_type: result.complaint_type || prev.complaint_type,
-          complaint_summary: result.complaint_summary || prev.complaint_summary,
-          detailed_feedback: result.detailed_feedback || prev.detailed_feedback,
-          positive_feedback: result.positive_feedback || prev.positive_feedback,
-          negative_feedback: result.negative_feedback || prev.negative_feedback,
-          specific_complaint: result.specific_complaint || prev.specific_complaint,
-          suggested_action: result.suggested_action || prev.suggested_action,
-          priority: result.priority || prev.priority,
-        }));
+        applyAIResultToForm(result);
       } else {
-        // Safe offline handling: do NOT pretend AI succeeded or generate fake transcripts
+        // Safe offline handling
         setAiResult(null);
         setFormData((prev) => ({
           ...prev,
@@ -416,8 +447,44 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       });
     } catch (err: any) {
       console.error("AI pipeline error:", err);
-      // Section 18: Never lose audio on failure! Allow Retry or continue with manual entry
       setProcessingError(err?.message || "AI processing encountered an issue.");
+    }
+  };
+
+  const applyAIResultToForm = (result: ProcessAudioResult) => {
+    const initialComplaint = result.complaint || result.english_translation || result.complaint_summary || "";
+    setFormData((prev) => ({
+      ...prev,
+      department: prev.department ? prev.department : (result.suggested_department || ""),
+      subcategory: prev.subcategory ? prev.subcategory : (result.suggested_subcategory || ""),
+      location: prev.location ? prev.location : (result.suggested_location || ""),
+      complaint: initialComplaint || prev.complaint,
+      complaint_type: result.complaint_type || prev.complaint_type,
+      complaint_summary: result.complaint_summary || prev.complaint_summary,
+      detailed_feedback: result.detailed_feedback || prev.detailed_feedback,
+      positive_feedback: result.positive_feedback || prev.positive_feedback,
+      negative_feedback: result.negative_feedback || prev.negative_feedback,
+      specific_complaint: result.specific_complaint || prev.specific_complaint,
+      suggested_action: result.suggested_action || prev.suggested_action,
+      priority: result.priority || prev.priority,
+    }));
+  };
+
+  const handleProcessDeveloperText = async () => {
+    if (!developerText.trim()) return;
+    setStep("processing");
+    setStatusBadge("PROCESSING");
+    setProcessingError(null);
+    setProcessingStatus("Processing text in developer conversion mode...");
+    try {
+      const result = await processText(developerText.trim(), sessionId);
+      setAiResult(result);
+      applyAIResultToForm(result);
+      setStep("details");
+      setStatusBadge("IDLE");
+    } catch (err: any) {
+      console.error("Developer text conversion error:", err);
+      setProcessingError(err?.message || "Text conversion encountered an issue.");
     }
   };
 
@@ -455,6 +522,177 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       duration_seconds: recordingDuration,
       form_data: formData,
     });
+  };
+
+  // ============================================================================
+  // ASYNC "SAVE & NEXT PATIENT" WORKFLOW (SECTION 1, 2, 3)
+  // ============================================================================
+
+  const handleSaveAndNextPatient = async () => {
+    // 1. Validate mandatory fields
+    const errors: Record<string, string> = {};
+    const cleanUhid = String(formData.uhid).trim();
+    const cleanName = formData.patient_name.trim();
+    const cleanDept = formData.department.trim();
+    const currentAudio = audioBlobRef.current || audioBlob;
+    const cleanComplaint = formData.complaint.trim();
+
+    if (!cleanUhid) errors.uhid = "UHID is required.";
+    if (!cleanName) errors.patient_name = "Patient Name is required.";
+    if (!cleanDept) errors.department = "Department is required.";
+    if (!currentAudio && !cleanComplaint) {
+      errors.audio = "Please record audio feedback or enter a complaint description.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+
+    // 2. Capture atomic snapshot before instant state reset
+    const activeUuid = sessionId || `uuid-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const snapshotFormData = { ...formData };
+    const snapshotAudio = currentAudio;
+
+    // Stop active recording if running
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      try { mediaRecorder.stop(); } catch (_) {}
+    }
+    if (audioStream) {
+      audioStream.getTracks().forEach((t) => t.stop());
+    }
+    clearInterval(timerRef.current);
+
+    // 3. INSTANT FORM RESET (<100ms UI response)
+    const nextSessionId = `uuid-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    setSessionId(nextSessionId);
+    audioBlobRef.current = null;
+    setAudioBlob(null);
+    setAudioChunks([]);
+    setRecordingDuration(0);
+    setIsRecording(false);
+    setIsPaused(false);
+    setFormErrors({});
+    setAiResult(null);
+    setFormData({
+      uhid: "",
+      patient_name: "",
+      department: "",
+      location: "",
+      consultant: "",
+      scheme: "",
+      attendant_name: "",
+      subcategory: "",
+      complaint: "",
+      complaint_type: "General Feedback",
+      complaint_summary: "",
+      detailed_feedback: "",
+      positive_feedback: "",
+      negative_feedback: "",
+      specific_complaint: "",
+      suggested_action: "",
+      priority: "Not Specified",
+    });
+    setStep("details");
+    setStatusBadge("IDLE");
+    clearDraftSession();
+
+    // 4. NON-INTRUSIVE NOTIFICATION
+    const label = cleanName ? `${cleanName} (${cleanUhid})` : cleanUhid;
+    if (isOnline) {
+      setToastMessage(`✓ Feedback Saved for ${label} — Processing in Background`);
+    } else {
+      setToastMessage(`✓ Feedback Saved Offline for ${label} — Will Sync When Online`);
+    }
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+
+    // 5. SERVER ASYNC DISPATCH (NON-BLOCKING)
+    if (isOnline) {
+      const fd = new FormData();
+      fd.append("client_uuid", activeUuid);
+      fd.append("uhid", cleanUhid);
+      fd.append("patient_name", cleanName);
+      fd.append("department", cleanDept);
+      if (snapshotFormData.location?.trim()) fd.append("location", snapshotFormData.location.trim());
+      if (snapshotFormData.consultant?.trim()) fd.append("consultant", snapshotFormData.consultant.trim());
+      if (snapshotFormData.scheme?.trim()) fd.append("scheme", snapshotFormData.scheme.trim());
+      if (snapshotFormData.attendant_name?.trim()) fd.append("attendant_name", snapshotFormData.attendant_name.trim());
+      if (cleanComplaint) fd.append("manual_complaint", cleanComplaint);
+      if (snapshotAudio) {
+        fd.append("audio", snapshotAudio, `${activeUuid}.webm`);
+      }
+
+      submitAsyncFeedback(fd)
+        .then(() => {
+          refreshQueueStatus();
+        })
+        .catch((err) => {
+          console.warn("Async submission error, fallback to local offline queue:", err);
+          enqueueOfflineFeedback({
+            client_uuid: activeUuid,
+            created_at: new Date().toISOString(),
+            payload: {
+              client_uuid: activeUuid,
+              uhid: cleanUhid,
+              patient_name: cleanName,
+              department: cleanDept,
+              location: snapshotFormData.location?.trim(),
+              consultant: snapshotFormData.consultant?.trim(),
+              scheme: snapshotFormData.scheme?.trim(),
+              attendant_name: snapshotFormData.attendant_name?.trim(),
+              complaint: cleanComplaint || undefined,
+            },
+            audio_blob: snapshotAudio || undefined,
+            status: "READY",
+            retry_count: 0,
+            last_error: err?.message,
+          }).then(() => {
+            getOfflineQueueItems().then(setOfflineItems);
+          });
+        });
+    } else {
+      enqueueOfflineFeedback({
+        client_uuid: activeUuid,
+        created_at: new Date().toISOString(),
+        payload: {
+          client_uuid: activeUuid,
+          uhid: cleanUhid,
+          patient_name: cleanName,
+          department: cleanDept,
+          location: snapshotFormData.location?.trim(),
+          consultant: snapshotFormData.consultant?.trim(),
+          scheme: snapshotFormData.scheme?.trim(),
+          attendant_name: snapshotFormData.attendant_name?.trim(),
+          complaint: cleanComplaint || undefined,
+        },
+        audio_blob: snapshotAudio || undefined,
+        status: "READY",
+        retry_count: 0,
+      }).then(() => {
+        getOfflineQueueItems().then(setOfflineItems);
+      });
+    }
+  };
+
+  const handleReviewManually = async () => {
+    if (!validatePatientDetails()) {
+      return;
+    }
+    const currentAudio = audioBlobRef.current || audioBlob;
+    if (currentAudio) {
+      proceedWithCapturedBlob(currentAudio);
+    } else {
+      setStep("review");
+      saveDraftSession({
+        session_id: sessionId,
+        started_at: new Date().toISOString(),
+        step: "review",
+        duration_seconds: recordingDuration,
+        form_data: formData,
+      });
+    }
   };
 
   // ============================================================================
@@ -605,8 +843,59 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
           setShowLowAudioModal(false);
           setStep("record");
         }}
-        onContinue={proceedWithAIAnalysis}
+        onContinue={() => {
+          setShowLowAudioModal(false);
+          if (audioBlobRef.current) {
+            proceedWithCapturedBlob(audioBlobRef.current);
+          } else {
+            setStep("details");
+          }
+        }}
       />
+
+      {/* Non-intrusive Toast Notification Banner (Section 2, 7) */}
+      {toastMessage && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 max-w-md w-full px-4 pointer-events-none animate-fade-in">
+          <div className="bg-emerald-900/95 backdrop-blur-md text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-500">
+            <CheckCircle2 className="w-5 h-5 text-emerald-300 shrink-0" />
+            <span className="text-xs font-bold leading-snug">{toastMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Queue Status Top Bar Indicator (Section 7) */}
+      <div
+        onClick={() => setShowQueueDrawer(true)}
+        className="mb-3 px-3.5 py-2 rounded-2xl bg-slate-900 text-white shadow-md border border-slate-700 flex items-center justify-between cursor-pointer hover:bg-slate-800 transition"
+      >
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${
+            queueStatus.processing_count > 0 ? "bg-sky-400 animate-ping" : "bg-emerald-400"
+          }`} />
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1">
+            <Layers className="w-3.5 h-3.5 text-sky-400" />
+            Queue:
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-[11px] font-semibold">
+          <span className="px-2 py-0.5 rounded-md bg-sky-900/60 text-sky-200 border border-sky-700">
+            Proc: {queueStatus.processing_count}
+          </span>
+          <span className="px-2 py-0.5 rounded-md bg-emerald-900/60 text-emerald-200 border border-emerald-700">
+            Done: {queueStatus.completed_count}
+          </span>
+          {queueStatus.needs_review_count > 0 && (
+            <span className="px-2 py-0.5 rounded-md bg-red-900/70 text-red-200 border border-red-700 font-bold animate-pulse">
+              Review: {queueStatus.needs_review_count}
+            </span>
+          )}
+          {offlineItems.length > 0 && (
+            <span className="px-2 py-0.5 rounded-md bg-amber-900/60 text-amber-200 border border-amber-700 font-bold">
+              Offline: {offlineItems.length}
+            </span>
+          )}
+        </div>
+      </div>
 
       {/* Visible State Banner (Section 2) */}
       {statusBadge !== "IDLE" && (
@@ -631,17 +920,42 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       {/* ==================================================================== */}
       {activeTab === "dashboard" && (
         <div className="space-y-4 animate-fade-in">
-          {/* Welcome Card */}
-          <div className="bg-gradient-to-r from-sky-700 to-teal-700 rounded-3xl p-5 text-white shadow-xl">
+          {/* Welcome Card & Mobile Branding (Section 21) */}
+          <div className="bg-gradient-to-br from-teal-800 via-teal-700 to-emerald-700 rounded-3xl p-5 text-white shadow-xl">
             <div className="flex items-center justify-between">
               <div>
-                <span className="text-xs uppercase tracking-wider text-sky-200 font-semibold">
-                  Hospital Mobile Station
+                <span className="text-[10px] font-extrabold tracking-widest uppercase text-emerald-200 block">
+                  POWERED BY SAARTHI-ONE
                 </span>
-                <h2 className="text-xl font-bold mt-0.5">{user.display_name}</h2>
+                <h1 className="text-2xl font-black text-white mt-0.5 tracking-tight">
+                  FEEDBACK MAC
+                </h1>
+                <p className="text-xs text-teal-100 font-medium mt-0.5">
+                  Station: {user.display_name}
+                </p>
               </div>
-              <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center">
-                <User className="w-6 h-6 text-white" />
+              <div className="flex flex-col items-end gap-1.5">
+                <div className="w-11 h-11 bg-white/15 backdrop-blur-md rounded-2xl flex items-center justify-center">
+                  <User className="w-6 h-6 text-white" />
+                </div>
+                {/* Network Status Indicator */}
+                <div className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1 border ${
+                  isOnline
+                    ? "bg-emerald-500/30 text-emerald-100 border-emerald-400/50"
+                    : "bg-amber-500/40 text-amber-100 border-amber-300/50 animate-pulse"
+                }`}>
+                  {isOnline ? (
+                    <>
+                      <Wifi className="w-3 h-3 text-emerald-200" />
+                      <span>ONLINE</span>
+                    </>
+                  ) : (
+                    <>
+                      <WifiOff className="w-3 h-3 text-amber-200" />
+                      <span>OFFLINE</span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -656,57 +970,59 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
             {/* Main Primary Action Button */}
             <button
               onClick={startNewFeedbackFlow}
-              className="mt-5 w-full py-4 bg-white text-sky-900 hover:bg-sky-50 active:scale-[0.99] font-extrabold rounded-2xl shadow-lg transition flex items-center justify-center gap-2.5 text-base"
+              className="mt-5 w-full py-4 bg-white text-teal-950 hover:bg-teal-50 active:scale-[0.99] font-black rounded-2xl shadow-lg transition flex items-center justify-center gap-2.5 text-base"
             >
-              <PlusCircle className="w-6 h-6 text-teal-600" />
-              + NEW PATIENT FEEDBACK
+              <PlusCircle className="w-6 h-6 text-emerald-600" />
+              + NEW FEEDBACK
             </button>
           </div>
 
-          {/* Quick Metrics Cards */}
+          {/* Quick Metrics Cards: Processing | Completed | Needs Review (Section 21) */}
           <div className="grid grid-cols-3 gap-2.5">
             <div
+              onClick={() => setShowQueueDrawer(true)}
+              className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-sky-300 transition text-center"
+            >
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
+                Processing
+              </span>
+              <span className="text-2xl font-black text-sky-700 mt-1 block">
+                {queueStatus.processing_count}
+              </span>
+              <span className="text-[10px] text-sky-600 font-semibold flex items-center justify-center gap-0.5 mt-0.5">
+                Active <ChevronRight className="w-3 h-3" />
+              </span>
+            </div>
+
+            <div
               onClick={() => setActiveTab("submissions")}
-              className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-sky-300 transition"
+              className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-emerald-300 transition text-center"
             >
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide block">
-                Today's
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
+                Completed
               </span>
-              <span className="text-2xl font-black text-slate-800 mt-1 block">
-                {todaySubmissions.length}
+              <span className="text-2xl font-black text-emerald-700 mt-1 block">
+                {queueStatus.completed_count}
               </span>
-              <span className="text-[10px] text-sky-600 font-semibold flex items-center gap-0.5 mt-0.5">
-                Submissions <ChevronRight className="w-3 h-3" />
+              <span className="text-[10px] text-emerald-600 font-semibold flex items-center justify-center gap-0.5 mt-0.5">
+                Verified <ChevronRight className="w-3 h-3" />
               </span>
             </div>
 
             <div
-              onClick={() => setActiveTab("offline")}
-              className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-amber-300 transition"
+              onClick={() => setShowQueueDrawer(true)}
+              className={`bg-white p-3.5 rounded-2xl border shadow-xs cursor-pointer transition text-center ${
+                queueStatus.needs_review_count > 0 ? "border-red-300 bg-red-50/20" : "border-slate-200 hover:border-red-300"
+              }`}
             >
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide block">
-                Pending Sync
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide block">
+                Needs Review
               </span>
-              <span className={`text-2xl font-black mt-1 block ${offlineItems.length > 0 ? "text-amber-600" : "text-slate-800"}`}>
-                {offlineItems.length}
+              <span className={`text-2xl font-black mt-1 block ${queueStatus.needs_review_count > 0 ? "text-red-600" : "text-slate-800"}`}>
+                {queueStatus.needs_review_count}
               </span>
-              <span className="text-[10px] text-amber-600 font-semibold flex items-center gap-0.5 mt-0.5">
-                Offline Queue <ChevronRight className="w-3 h-3" />
-              </span>
-            </div>
-
-            <div
-              onClick={() => recoveredDraft && setStep(recoveredDraft.step)}
-              className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs cursor-pointer hover:border-teal-300 transition"
-            >
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide block">
-                Drafts
-              </span>
-              <span className="text-2xl font-black text-slate-800 mt-1 block">
-                {recoveredDraft ? 1 : 0}
-              </span>
-              <span className="text-[10px] text-teal-600 font-semibold flex items-center gap-0.5 mt-0.5">
-                In-Progress <ChevronRight className="w-3 h-3" />
+              <span className="text-[10px] text-red-600 font-semibold flex items-center justify-center gap-0.5 mt-0.5">
+                Inspect <ChevronRight className="w-3 h-3" />
               </span>
             </div>
           </div>
@@ -840,6 +1156,50 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   ? "Recording active. Speak clearly near the patient. Tap STOP & PROCESS when finished."
                   : "Tap the microphone button to start voice recording."}
               </p>
+
+              {/* Developer / QA Test Mode (Section 9) */}
+              <div className="w-full pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowDevTextMode(!showDevTextMode)}
+                  className="text-xs font-semibold text-slate-500 hover:text-sky-600 flex items-center justify-center gap-1.5 mx-auto"
+                >
+                  <Cpu className="w-3.5 h-3.5" />
+                  {showDevTextMode ? "Hide Developer Test Mode" : "Developer Test Mode (Direct Text Conversion)"}
+                </button>
+
+                {showDevTextMode && (
+                  <div className="mt-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-left space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">
+                        Isolate AI Conversion from Microphone
+                      </span>
+                      <span className="text-[10px] bg-sky-100 text-sky-700 font-bold px-2 py-0.5 rounded-full">
+                        QA Test
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500">
+                      Tests faithful transcription, Hindi/Hinglish translation, shorthand normalization (GW1 &rarr; General Ward 1), and structuring directly without microphone capture.
+                    </p>
+                    <textarea
+                      value={developerText}
+                      onChange={(e) => setDeveloperText(e.target.value)}
+                      rows={2}
+                      className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-sky-500 font-medium"
+                      placeholder="Enter raw Hindi or Hinglish spoken text..."
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleProcessDeveloperText}
+                        className="py-2 px-4 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl shadow-xs transition"
+                      >
+                        Run Text-to-English Conversion &rarr;
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -863,16 +1223,32 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl font-medium">
                     {processingError}
                   </div>
-                  <div className="flex gap-2 justify-center">
+                  <div className="flex flex-wrap gap-2 justify-center">
                     <button
-                      onClick={proceedWithAIAnalysis}
-                      className="py-2 px-4 bg-sky-600 text-white text-xs font-bold rounded-xl shadow-xs"
+                      onClick={() => {
+                        setAudioBlob(null);
+                        setProcessingError(null);
+                        setStep("record");
+                      }}
+                      className="py-2 px-4 bg-teal-600 text-white text-xs font-bold rounded-xl shadow-xs hover:bg-teal-700 transition"
+                    >
+                      Record Again
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (audioBlobRef.current) {
+                          proceedWithCapturedBlob(audioBlobRef.current);
+                        } else {
+                          setStep("record");
+                        }
+                      }}
+                      className="py-2 px-4 bg-sky-600 text-white text-xs font-bold rounded-xl shadow-xs hover:bg-sky-700 transition"
                     >
                       Retry AI Analysis
                     </button>
                     <button
                       onClick={() => setStep("details")}
-                      className="py-2 px-4 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl"
+                      className="py-2 px-4 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-200 transition"
                     >
                       Continue with Manual Entry
                     </button>
@@ -1065,27 +1441,135 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                 </div>
               </div>
 
-              {/* Editable Complaint Summary */}
+              {/* VOICE RECORDING & AUDIO CAPTURE CARD (SECTION 1, 2) */}
+              <div className="pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Mic className="w-4 h-4 text-teal-600" />
+                    Patient Voice Feedback <span className="text-slate-400 font-normal">(Hindi / Hinglish / English)</span>
+                  </span>
+                  {audioBlob && (
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      ✓ Audio Attached
+                    </span>
+                  )}
+                </div>
+
+                {isRecording ? (
+                  <div className="p-4 bg-red-50/50 border border-red-200 rounded-2xl flex flex-col items-center space-y-3">
+                    <div className="flex items-center gap-2 text-red-600 font-extrabold text-xs uppercase tracking-wider animate-pulse">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping" />
+                      Listening... ({formatTimer(recordingDuration)})
+                    </div>
+                    <AudioVisualizer
+                      stream={audioStream}
+                      isRecording={isRecording}
+                      isPaused={isPaused}
+                    />
+                    <div className="flex items-center gap-3">
+                      {!isPaused ? (
+                        <button
+                          type="button"
+                          onClick={pauseRecording}
+                          className="py-2 px-3.5 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-bold rounded-xl flex items-center gap-1"
+                        >
+                          <Pause className="w-3.5 h-3.5" /> Pause
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={resumeRecording}
+                          className="py-2 px-3.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center gap-1"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" /> Resume
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={stopRecording}
+                        className="py-2.5 px-5 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-1.5"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-current" /> STOP RECORDING
+                      </button>
+                    </div>
+                  </div>
+                ) : audioBlob ? (
+                  <div className="p-3.5 bg-teal-50/60 border border-teal-200 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between text-xs font-medium text-teal-900">
+                      <span className="flex items-center gap-1.5 font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-teal-600" />
+                        Audio Captured ({recordingDuration}s, {Math.round(audioBlob.size / 1024)} KB)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={discardRecording}
+                        className="text-xs font-bold text-red-600 hover:bg-red-50 px-2 py-1 rounded-lg transition"
+                      >
+                        Re-record
+                      </button>
+                    </div>
+                    <audio
+                      src={URL.createObjectURL(audioBlob)}
+                      controls
+                      className="w-full h-8"
+                    />
+                  </div>
+                ) : (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col items-center text-center space-y-2">
+                    <button
+                      type="button"
+                      onClick={startRecording}
+                      className="w-full py-3.5 bg-gradient-to-r from-sky-600 to-teal-600 hover:from-sky-700 hover:to-teal-700 text-white font-extrabold rounded-xl shadow-md transition flex items-center justify-center gap-2 text-xs"
+                    >
+                      <Mic className="w-4 h-4" />
+                      RECORD PATIENT / ATTENDANT VOICE
+                    </button>
+                    <span className="text-[11px] text-slate-400">
+                      Tap to record spoken Hindi, Hinglish, or English complaint
+                    </span>
+                  </div>
+                )}
+
+                {formErrors.audio && (
+                  <span className="text-red-600 text-xs mt-1.5 block font-medium">
+                    {formErrors.audio}
+                  </span>
+                )}
+              </div>
+
+              {/* Optional Manual Complaint / Notes Text */}
               <div className="pt-2">
                 <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Complaint Summary
+                  Manual Complaint / Notes <span className="text-slate-400 font-normal">(Optional if voice recorded)</span>
                 </label>
                 <textarea
                   rows={2}
-                  value={formData.complaint_summary}
-                  onChange={(e) => setFormData({ ...formData, complaint_summary: e.target.value })}
-                  placeholder="Summary of complaint or feedback"
-                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+                  value={formData.complaint}
+                  onChange={(e) => setFormData({ ...formData, complaint: e.target.value })}
+                  placeholder="Type notes or direct complaint if not speaking..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-sky-500 focus:outline-none"
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full py-3.5 bg-gradient-to-r from-sky-600 to-teal-600 hover:from-sky-700 hover:to-teal-700 active:scale-[0.99] text-white font-bold rounded-2xl shadow-lg transition flex items-center justify-center gap-2 text-sm"
-              >
-                PROCEED TO REVIEW
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {/* ACTION BUTTONS: PRIMARY FAST ASYNC PATH VS MANUAL REVIEW */}
+              <div className="pt-3 space-y-2">
+                <button
+                  type="button"
+                  onClick={handleSaveAndNextPatient}
+                  className="w-full py-4 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 active:scale-[0.99] text-white font-black rounded-2xl shadow-xl shadow-teal-600/30 transition flex items-center justify-center gap-2 text-base"
+                >
+                  <CheckCircle2 className="w-5 h-5 text-teal-200" />
+                  SAVE & NEXT PATIENT
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReviewManually}
+                  className="w-full py-2.5 text-slate-500 hover:text-sky-700 hover:bg-sky-50 font-semibold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  Review Manually (Optional)
+                </button>
+              </div>
             </form>
           )}
 
@@ -1110,15 +1594,15 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                 </button>
               </div>
 
-              {/* SECTION 1: PATIENT DETAILS */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-3">
-                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              {/* BLOCK 1: STAFF-ENTERED INFORMATION */}
+              <div className="bg-emerald-50/30 border border-emerald-200 rounded-2xl p-4 text-xs space-y-3">
+                <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
                   <span className="font-extrabold text-slate-800 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
                     <UserCheck className="w-4 h-4 text-emerald-600" />
-                    PATIENT DETAILS
+                    1. Patient Details
                   </span>
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                    Staff Verified
+                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
+                    [Staff Entered]
                   </span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -1149,17 +1633,56 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                 </div>
               </div>
 
-              {/* SECTION 2: AI / FEEDBACK */}
+              {/* BLOCK 2: ORIGINAL SPEECH / TRANSCRIPT */}
+              <div className="bg-amber-50/40 border border-amber-200 rounded-2xl p-4 text-xs space-y-2">
+                <div className="flex items-center justify-between border-b border-amber-200 pb-2">
+                  <span className="font-extrabold text-amber-950 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <Mic className="w-4 h-4 text-amber-600" />
+                    2. Original Speech / Transcript
+                  </span>
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                    [Original Speech (Verbatim)]
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-500 block mb-1">
+                    Verbatim spoken conversation preserved without translation or editing:
+                  </span>
+                  <div className="bg-white p-3 rounded-xl border border-amber-200 text-slate-800 text-xs font-mono leading-relaxed max-h-24 overflow-y-auto whitespace-pre-wrap">
+                    {aiResult?.original_transcript || (audioBlob ? "[Voice recording stored locally in encrypted offline queue. Speech will transcribe verbatim on cloud sync.]" : "Direct submission without recording")}
+                  </div>
+                </div>
+              </div>
+
+              {/* BLOCK 3: AI-GENERATED CONTENT (EDITABLE) */}
               <div className="bg-sky-50/50 border border-sky-200 rounded-2xl p-4 text-xs space-y-3">
                 <div className="flex items-center justify-between border-b border-sky-200 pb-2">
                   <span className="font-extrabold text-sky-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
                     <Bot className="w-4 h-4 text-sky-600" />
-                    AI / FEEDBACK
+                    3. AI-Generated Content
                   </span>
-                  <span className="text-[10px] font-semibold text-sky-700 bg-white px-2 py-0.5 rounded-md border border-sky-300">
-                    Staff Editable
+                  <span className="text-[10px] font-bold text-sky-800 bg-sky-100 px-2 py-0.5 rounded-md border border-sky-300">
+                    [AI Generated - Editable]
                   </span>
                 </div>
+
+                {aiResult?.diagnostics && (
+                  <div className="bg-white/80 p-2 rounded-xl border border-sky-100 flex flex-wrap items-center gap-2 text-[10px] text-slate-600 font-mono">
+                    <span className="font-bold text-sky-800">DIAGNOSTICS:</span>
+                    <span className={aiResult.diagnostics.STT_SUCCESS ? "text-emerald-700" : "text-amber-700"}>
+                      STT_SUCCESS={String(aiResult.diagnostics.STT_SUCCESS)}
+                    </span>
+                    <span className={aiResult.diagnostics.TRANSCRIPT_PRESENT ? "text-emerald-700" : "text-red-700"}>
+                      TRANSCRIPT_PRESENT={String(aiResult.diagnostics.TRANSCRIPT_PRESENT)}
+                    </span>
+                    <span className={aiResult.diagnostics.TRANSLATION_SUCCESS ? "text-emerald-700" : "text-red-700"}>
+                      TRANSLATION_SUCCESS={String(aiResult.diagnostics.TRANSLATION_SUCCESS)}
+                    </span>
+                    <span className={aiResult.diagnostics.AI_ANALYSIS_SUCCESS ? "text-emerald-700" : "text-red-700"}>
+                      AI_ANALYSIS_SUCCESS={String(aiResult.diagnostics.AI_ANALYSIS_SUCCESS)}
+                    </span>
+                  </div>
+                )}
 
                 {!isOnline && (
                   <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs font-semibold flex items-center gap-2 shadow-xs">
@@ -1168,21 +1691,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   </div>
                 )}
 
-                {/* Original Transcript */}
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
-                    Original Transcript (Preserved verbatim):
-                  </label>
-                  <div className="bg-white p-3 rounded-xl border border-sky-100 text-slate-700 text-xs font-mono leading-relaxed max-h-24 overflow-y-auto">
-                    {aiResult?.original_transcript || (audioBlob ? "[Voice recording stored locally in encrypted offline queue. Speech will transcribe on cloud sync.]" : "Direct submission without recording")}
-                  </div>
-                </div>
-
-                {/* English Complaint (Editable by staff before submission) */}
+                {/* Professional English Complaint */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-[10px] font-bold text-sky-900 uppercase flex items-center gap-1">
-                      English Complaint <span className="text-slate-400 font-normal">(Staff may edit before submission)</span>
+                      Professional English Complaint <span className="text-slate-400 font-normal">(Staff may edit before submission)</span>
                     </label>
                     <span className="text-[10px] text-sky-600 font-bold flex items-center gap-0.5">
                       <Edit3 className="w-3 h-3" /> Editable
@@ -1194,6 +1707,25 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                     onChange={(e) => setFormData({ ...formData, complaint: e.target.value })}
                     placeholder="Enter or refine final English complaint statement..."
                     className="w-full p-3 bg-white border border-sky-300 rounded-xl text-slate-900 text-xs font-medium focus:ring-2 focus:ring-sky-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* Short Summary (Editable by staff) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-bold text-sky-900 uppercase flex items-center gap-1">
+                      Short Summary <span className="text-slate-400 font-normal">(1-sentence factual summary of spoken issue only)</span>
+                    </label>
+                    <span className="text-[10px] text-sky-600 font-bold flex items-center gap-0.5">
+                      <Edit3 className="w-3 h-3" /> Editable
+                    </span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={formData.complaint_summary}
+                    onChange={(e) => setFormData({ ...formData, complaint_summary: e.target.value })}
+                    placeholder="1-sentence factual summary..."
+                    className="w-full p-2.5 bg-white border border-sky-300 rounded-xl text-slate-900 text-xs font-medium focus:ring-2 focus:ring-sky-500 focus:outline-none"
                   />
                 </div>
 
@@ -1229,15 +1761,15 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                 </div>
               </div>
 
-              {/* SECTION 3: SYSTEM */}
+              {/* BLOCK 4: SYSTEM-CONTROLLED */}
               <div className="bg-purple-50/70 border border-purple-200 rounded-2xl p-4 text-xs space-y-2">
                 <div className="flex items-center justify-between border-b border-purple-200 pb-2">
                   <span className="font-extrabold text-purple-900 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
                     <Cpu className="w-4 h-4 text-purple-600" />
-                    SYSTEM
+                    4. System-Controlled
                   </span>
-                  <span className="text-[10px] font-semibold text-purple-700 bg-white px-2 py-0.5 rounded-md border border-purple-300">
-                    Deterministic Mapping
+                  <span className="text-[10px] font-bold text-purple-800 bg-purple-100 px-2 py-0.5 rounded-md border border-purple-300">
+                    [System Resolved]
                   </span>
                 </div>
                 <div className="flex items-center justify-between pt-1">
@@ -1246,7 +1778,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                       Final Resolved HOD:
                     </span>
                     <span className="text-[10px] text-purple-600">
-                      Deterministic business mapping (no AI hallucination)
+                      Deterministic business mapping strictly from selected department (no AI guessing)
                     </span>
                   </div>
                   <span className={`font-extrabold px-3 py-1.5 rounded-xl text-xs border ${
@@ -1440,6 +1972,95 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Background Processing Queue Drawer / Slide-Over (Section 7) */}
+      {showQueueDrawer && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end animate-fade-in">
+          <div className="bg-white w-full max-w-md h-full shadow-2xl flex flex-col p-5 overflow-hidden">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="w-5 h-5 text-sky-600" />
+                <h3 className="font-extrabold text-slate-900 text-base">Background Queue</h3>
+              </div>
+              <button
+                onClick={() => setShowQueueDrawer(false)}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 py-3 border-b text-center">
+              <div className="bg-sky-50 p-2 rounded-xl border border-sky-200">
+                <span className="text-[10px] font-bold text-sky-700 uppercase block">Processing</span>
+                <span className="text-lg font-black text-sky-900">{queueStatus.processing_count}</span>
+              </div>
+              <div className="bg-emerald-50 p-2 rounded-xl border border-emerald-200">
+                <span className="text-[10px] font-bold text-emerald-700 uppercase block">Completed</span>
+                <span className="text-lg font-black text-emerald-900">{queueStatus.completed_count}</span>
+              </div>
+              <div className="bg-red-50 p-2 rounded-xl border border-red-200">
+                <span className="text-[10px] font-bold text-red-700 uppercase block">Needs Review</span>
+                <span className="text-lg font-black text-red-900">{queueStatus.needs_review_count}</span>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto py-3 space-y-2.5">
+              {queueStatus.items.length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  No background jobs in recent history.
+                </div>
+              ) : (
+                queueStatus.items.map((job) => (
+                  <div
+                    key={job.feedback_id}
+                    className={`p-3 rounded-2xl border text-xs ${
+                      job.status === "NEEDS_REVIEW"
+                        ? "bg-red-50/60 border-red-200 text-red-900"
+                        : job.status === "COMPLETED"
+                        ? "bg-emerald-50/40 border-emerald-200 text-slate-800"
+                        : "bg-sky-50/40 border-sky-200 text-slate-800"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-mono">
+                      <span className="font-bold">{job.feedback_id}</span>
+                      <span className="text-[10px] text-slate-400">{job.time_str}</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-slate-600 font-medium">UHID: {job.uhid_short}</span>
+                      <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md ${
+                        job.status === "NEEDS_REVIEW"
+                          ? "bg-red-200 text-red-800"
+                          : job.status === "COMPLETED"
+                          ? "bg-emerald-200 text-emerald-800"
+                          : "bg-sky-200 text-sky-800 animate-pulse"
+                      }`}>
+                        {job.status}
+                      </span>
+                    </div>
+                    {job.processing_error && (
+                      <div className="mt-2 p-2 bg-red-100/70 border border-red-300 rounded-xl text-[11px] text-red-800">
+                        <span className="font-bold block">Issue:</span>
+                        {job.processing_error}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                refreshQueueStatus();
+              }}
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Refresh Queue
+            </button>
+          </div>
         </div>
       )}
     </div>

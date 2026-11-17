@@ -1,4 +1,4 @@
-import { processAudio, submitFeedback } from "./api";
+import { processAudio, submitAsyncFeedback, submitFeedback } from "./api";
 import {
   getOfflineQueueItems,
   removeOfflineItem,
@@ -37,36 +37,39 @@ export function initSyncEngine(onSyncUpdate?: (count: number) => void) {
 
           let payload = { ...item.payload };
 
-          // If there is an unprocessed audio blob, run STT & AI pipeline first (Section 18: Failure Recovery)
-          if (
-            item.audio_blob &&
-            (!payload.original_transcript || payload.original_transcript.trim() === "" || !payload.complaint || payload.complaint.trim() === "")
-          ) {
-            try {
-              const aiRes = await processAudio(item.audio_blob, item.client_uuid);
-              payload.audio_file_id = aiRes.audio_file_id;
-              payload.duration_seconds = aiRes.duration_seconds;
-              payload.original_language = aiRes.original_language;
-              payload.original_transcript = aiRes.original_transcript;
-              payload.english_translation = aiRes.english_translation;
-              payload.complaint = aiRes.complaint || aiRes.english_translation || aiRes.complaint_summary || "Not Provided";
-              payload.complaint_type = payload.complaint_type && payload.complaint_type !== "General Feedback" ? payload.complaint_type : aiRes.complaint_type;
-              payload.complaint_summary = aiRes.complaint_summary;
-              payload.detailed_feedback = aiRes.detailed_feedback;
-              payload.positive_feedback = aiRes.positive_feedback;
-              payload.negative_feedback = aiRes.negative_feedback;
-              payload.specific_complaint = aiRes.specific_complaint;
-              payload.suggested_action = aiRes.suggested_action;
-              payload.ai_suggested_department = aiRes.suggested_department;
-              payload.priority = aiRes.priority;
-            } catch (procErr: any) {
-              console.warn("Audio processing failed during sync, preserving audio and queuing for retry:", procErr);
-              throw new Error(`AI Pipeline Failed: ${procErr?.message || "Audio processing error"}`);
-            }
-          }
+          // If item has audio_blob, push directly to backend async endpoint so server processes in background
+          if (item.audio_blob) {
+            const formData = new FormData();
+            formData.append("client_uuid", item.client_uuid);
+            formData.append("uhid", payload.uhid);
+            formData.append("patient_name", payload.patient_name);
+            formData.append("department", payload.department);
+            if (payload.location) formData.append("location", payload.location);
+            if (payload.consultant) formData.append("consultant", payload.consultant);
+            if (payload.scheme) formData.append("scheme", payload.scheme);
+            if (payload.attendant_name) formData.append("attendant_name", payload.attendant_name);
+            if (payload.complaint) formData.append("manual_complaint", payload.complaint);
+            formData.append("audio", item.audio_blob, `${item.client_uuid}.webm`);
 
-          // Submit to central server (Idempotent by client_uuid)
-          await submitFeedback(payload);
+            await submitAsyncFeedback(formData);
+          } else if (payload.complaint && payload.complaint.trim()) {
+            // Manual complaint without audio - can be submitted via async or regular submission
+            const formData = new FormData();
+            formData.append("client_uuid", item.client_uuid);
+            formData.append("uhid", payload.uhid);
+            formData.append("patient_name", payload.patient_name);
+            formData.append("department", payload.department);
+            if (payload.location) formData.append("location", payload.location);
+            if (payload.consultant) formData.append("consultant", payload.consultant);
+            if (payload.scheme) formData.append("scheme", payload.scheme);
+            if (payload.attendant_name) formData.append("attendant_name", payload.attendant_name);
+            formData.append("manual_complaint", payload.complaint);
+
+            await submitAsyncFeedback(formData);
+          } else {
+            // Fallback for pre-structured items
+            await submitFeedback(payload);
+          }
 
           // Mark completed & clean up
           await removeOfflineItem(item.client_uuid);

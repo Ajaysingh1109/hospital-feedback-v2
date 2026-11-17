@@ -1,3 +1,19 @@
+import os
+
+# Clearly fake test-only credentials (Never real production credentials)
+TEST_MASTER_USERNAME = "test_master@local"
+TEST_MASTER_PASSWORD = "TestMasterPassword!123"
+TEST_FEEDBACK_USERNAME = "test_staff@local"
+TEST_FEEDBACK_PASSWORD = "TestStaffPassword!123"
+
+os.environ["MASTER_USERNAME"] = TEST_MASTER_USERNAME
+os.environ["MASTER_PASSWORD"] = TEST_MASTER_PASSWORD
+os.environ["FEEDBACK_USER_USERNAME"] = TEST_FEEDBACK_USERNAME
+os.environ["FEEDBACK_USER_PASSWORD"] = TEST_FEEDBACK_PASSWORD
+os.environ["SECRET_KEY"] = "test-secret-key-32-chars-long-for-pytest-only"
+os.environ["CRON_SECRET"] = "test-cron-secret-for-pytest"
+os.environ["AI_PROVIDER"] = "mock"
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

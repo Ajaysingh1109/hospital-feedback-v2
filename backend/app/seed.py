@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -143,9 +144,8 @@ def cleanup_legacy_users(db: Session, master_id: str):
 
 def init_master_account(db: Session) -> User:
     """
-    Ensures a single initial MASTER account exists.
-    Created with forced password change required on first login.
-    NO staff users are seeded automatically.
+    Ensures the MASTER account (RoleEnum.ADMIN) exists and is configured
+    with the server-side MASTER_USERNAME and MASTER_PASSWORD.
     """
     clean_master_username = settings.MASTER_USERNAME.strip()
 
@@ -154,27 +154,71 @@ def init_master_account(db: Session) -> User:
     )
 
     if not master_user:
-        # Check if an admin or master account already exists
-        existing_admin = db.scalar(
-            select(User).where(User.role.in_([RoleEnum.ADMIN, RoleEnum.MASTER]))
+        master_user = User(
+            username=clean_master_username,
+            display_name=settings.MASTER_DISPLAY_NAME,
+            password_hash=hash_password(settings.MASTER_PASSWORD),
+            role=RoleEnum.ADMIN,
+            is_active=True,
+            must_change_password=True,
         )
-        if not existing_admin:
-            master_user = User(
-                username=clean_master_username,
-                display_name=settings.MASTER_DISPLAY_NAME,
-                password_hash=hash_password(settings.MASTER_PASSWORD),
-                role=RoleEnum.ADMIN,
-                is_active=True,
-                must_change_password=True,
-            )
-            db.add(master_user)
-            db.commit()
-            db.refresh(master_user)
-            logger.info("Master Administrator account initialized.")
-        else:
-            master_user = existing_admin
+        db.add(master_user)
+        db.commit()
+        db.refresh(master_user)
+        logger.info(f"Master Administrator account initialized: {clean_master_username}")
+    else:
+        # Keep credentials and role synchronized with server-side environment
+        master_user.role = RoleEnum.ADMIN
+        master_user.display_name = settings.MASTER_DISPLAY_NAME
+        master_user.password_hash = hash_password(settings.MASTER_PASSWORD)
+        master_user.is_active = True
+        db.commit()
+        db.refresh(master_user)
+        logger.info(f"Master Administrator account synchronized: {clean_master_username}")
 
     return master_user
+
+
+def init_feedback_user(db: Session) -> Optional[User]:
+    """
+    Ensures an initial FEEDBACK USER (STAFF role) account exists for mobile operations.
+    Synchronizes credentials and role with server-side configuration.
+    """
+    staff_username = (settings.FEEDBACK_USER_USERNAME or "").strip()
+    staff_password = settings.FEEDBACK_USER_PASSWORD
+    staff_display_name = settings.FEEDBACK_USER_DISPLAY_NAME or "Duty Feedback Nurse"
+
+    if not staff_username or not staff_password:
+        return None
+
+    staff_user = db.scalar(
+        select(User).where(func.lower(User.username) == staff_username.lower())
+    )
+
+    if not staff_user:
+        staff_user = User(
+            username=staff_username,
+            display_name=staff_display_name,
+            password_hash=hash_password(staff_password),
+            role=RoleEnum.STAFF,
+            is_active=True,
+            must_change_password=False,
+        )
+        db.add(staff_user)
+        db.commit()
+        db.refresh(staff_user)
+        logger.info(f"Initial Feedback User (STAFF) initialized: {staff_username}")
+    else:
+        # Crucial: Ensure role is STAFF and credentials match server configuration
+        staff_user.role = RoleEnum.STAFF
+        staff_user.display_name = staff_display_name
+        staff_user.password_hash = hash_password(staff_password)
+        staff_user.is_active = True
+        db.commit()
+        db.refresh(staff_user)
+        logger.info(f"Initial Feedback User (STAFF) synchronized: {staff_username}")
+
+    return staff_user
 
 
 def seed_database(db: Session = None):
@@ -190,6 +234,9 @@ def seed_database(db: Session = None):
 
         # 2. Safely remove legacy demo/test accounts while preserving feedback and audit data
         cleanup_legacy_users(db, master_id=master_user.id)
+
+        # 3. Initialize Initial Feedback User (STAFF role for mobile feedback capture)
+        feedback_user = init_feedback_user(db)
 
         # 3. Seed Departments & Subcategories
         for dept_name, subcats in INITIAL_DEPARTMENTS.items():
