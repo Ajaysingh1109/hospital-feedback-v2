@@ -8,10 +8,11 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: false
-    disk:
-      name: hospital-feedback-data
-      mountPath: /app/data
-      sizeGB: 10
+    # Persistent Disk (Requires Render Starter tier or above. On Free tier, leave commented; /tmp/audio fallback is automatic)
+    # disk:
+    #   name: hospital-feedback-data
+    #   mountPath: /app/data
+    #   sizeGB: 10
     envVars:
       - key: ENVIRONMENT
         value: production
@@ -22,13 +23,11 @@ services:
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "480"
       - key: DATABASE_URL
-        fromDatabase:
-          name: hospital-feedback-db
-          property: connectionString
+        sync: false  # Configure external PostgreSQL (e.g. Supabase Session Pooler) in Render Dashboard
       - key: CORS_ORIGINS
         sync: false  # Configure exact production frontend domain(s) (e.g. https://your-frontend.vercel.app)
       - key: AUDIO_STORAGE_DIR
-        value: /app/data/audio
+        value: /tmp/audio  # Defaults to /tmp/audio on Free tier; set to /app/data/audio when disk is mounted
       - key: AUDIO_RETENTION_POLICY
         value: keep
       - key: AI_PROVIDER
@@ -68,9 +67,9 @@ services:
           name: hospital-feedback-api
           envVarKey: CRON_SECRET
 
-databases:
-  # 3. Central Managed PostgreSQL Database
-  - name: hospital-feedback-db
-    databaseName: hospital_feedback
-    user: hospital_user
-    plan: free
+# databases:
+#   # Optional Render PostgreSQL (expires in 30 days on Free tier; Supabase Free tier recommended)
+#   - name: hospital-feedback-db
+#     databaseName: hospital_feedback
+#     user: hospital_user
+#     plan: free

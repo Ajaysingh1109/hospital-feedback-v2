@@ -1,4 +1,5 @@
 import os
+import urllib.parse
 from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -11,17 +12,49 @@ settings = get_settings()
 def normalize_database_url(url: str) -> str:
     """
     Normalizes database URL for cloud providers (Render, Supabase, Neon, Railway).
-    Ensures that PostgreSQL URLs explicitly use the psycopg2 driver (postgresql+psycopg2://)
-    to prevent SQLAlchemy 2.0+ from falling back to psycopg v3 (ModuleNotFoundError: No module named 'psycopg').
-    Preserves SQLite URLs and explicit driver specifications (e.g., postgresql+psycopg2://).
+    1. Strips any surrounding quotes, whitespace, or newlines.
+    2. Ensures that PostgreSQL URLs explicitly use the psycopg2 driver (postgresql+psycopg2://)
+       to prevent SQLAlchemy 2.0+ from falling back to psycopg v3 (ModuleNotFoundError: No module named 'psycopg').
+    3. Handles unencoded special characters in passwords (especially '@', ':', '#', etc.)
+       which otherwise cause host parsing failures like:
+       `sqlalchemy.exc.OperationalError: could not translate host name "po" to address`
+    4. Automatically ensures `sslmode=require` for Supabase / remote poolers if missing.
+    5. Preserves SQLite URLs and explicit driver specifications.
     """
     if not url:
         return url
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+psycopg2://", 1)
-    if url.startswith("postgresql://") and not url.startswith("postgresql+"):
-        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
-    return url
+
+    clean_url = url.strip().strip('"\'')
+
+    # Ensure explicit psycopg2 driver
+    if clean_url.startswith("postgres://"):
+        clean_url = "postgresql+psycopg2://" + clean_url[len("postgres://"):]
+    elif clean_url.startswith("postgresql://") and not clean_url.startswith("postgresql+"):
+        clean_url = "postgresql+psycopg2://" + clean_url[len("postgresql://"):]
+
+    # For PostgreSQL / remote connections, safely isolate credentials and encode password
+    if "://" in clean_url and not clean_url.startswith("sqlite"):
+        try:
+            proto, remainder = clean_url.split("://", 1)
+            # Find credentials vs host: use rsplit('@', 1) because the last '@' separates credentials from host
+            if "@" in remainder:
+                auth_part, host_part = remainder.rsplit("@", 1)
+                if ":" in auth_part:
+                    user, raw_pass = auth_part.split(":", 1)
+                    # Safely encode special characters (like '@', '#', '$') in password
+                    unquoted_pass = urllib.parse.unquote(raw_pass)
+                    encoded_pass = urllib.parse.quote(unquoted_pass, safe="")
+                    clean_url = f"{proto}://{user}:{encoded_pass}@{host_part}"
+        except Exception:
+            pass
+
+        # Supabase and transaction/session poolers require SSL
+        if any(h in clean_url.lower() for h in ["supabase.co", "supabase.com", "pooler"]):
+            if "sslmode=" not in clean_url:
+                delimiter = "&" if "?" in clean_url else "?"
+                clean_url = f"{clean_url}{delimiter}sslmode=require"
+
+    return clean_url
 
 
 db_url = normalize_database_url(settings.DATABASE_URL)

@@ -80,8 +80,13 @@ def test_database_url_normalization_for_psycopg2():
     """
     Verifies that postgres:// and postgresql:// are explicitly normalized to postgresql+psycopg2://
     to prevent SQLAlchemy 2.0+ from falling back to psycopg v3 (ModuleNotFoundError: No module named 'psycopg').
-    Verifies SQLite URLs remain completely unaffected for local development.
+    Verifies:
+    - Passwords containing '@' or special characters do not corrupt the hostname (e.g. host 'po' error)
+    - Quoted URLs are properly unquoted and sanitized
+    - Supabase / pooler URLs automatically receive sslmode=require
+    - SQLite URLs remain completely unaffected for local development.
     """
+    from sqlalchemy.engine import make_url
     from app.db.database import normalize_database_url
 
     # 1. postgres:// (Legacy Heroku/Render scheme)
@@ -94,12 +99,32 @@ def test_database_url_normalization_for_psycopg2():
         "postgresql+psycopg2://hospital_user:secret@dpg-host:5432/hospital_feedback"
     )
 
-    # 3. Already explicit postgresql+psycopg2:// (unmodified)
+    # 3. Password containing '@' causing host parsing issues
+    # Without fix, @ inside password splits incorrectly and results in host "po" or error.
+    url_with_at = "postgresql://postgres.myproject:TestUser@Pass999@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+    norm_at = normalize_database_url(url_with_at)
+    assert "TestUser%40Pass999" in norm_at
+    assert "sslmode=require" in norm_at
+    parsed_at = make_url(norm_at)
+    assert parsed_at.host == "aws-0-ap-south-1.pooler.supabase.com"
+    assert parsed_at.port == 5432
+    assert parsed_at.username == "postgres.myproject"
+    assert parsed_at.password == "TestUser@Pass999"
+
+    # 4. Quoted DATABASE_URL from .env or Render dashboard
+    quoted_url = '"postgresql://user:pass@aws-0.pooler.supabase.com:5432/db"'
+    norm_quoted = normalize_database_url(quoted_url)
+    assert not norm_quoted.startswith('"')
+    assert norm_quoted.startswith("postgresql+psycopg2://")
+    parsed_quoted = make_url(norm_quoted)
+    assert parsed_quoted.host == "aws-0.pooler.supabase.com"
+
+    # 5. Already explicit postgresql+psycopg2:// (unmodified driver)
     assert normalize_database_url("postgresql+psycopg2://user:secret@localhost:5432/db") == (
         "postgresql+psycopg2://user:secret@localhost:5432/db"
     )
 
-    # 4. Local SQLite development (unmodified)
+    # 6. Local SQLite development (unmodified)
     assert normalize_database_url("sqlite:///./data/hospital_feedback.db") == (
         "sqlite:///./data/hospital_feedback.db"
     )

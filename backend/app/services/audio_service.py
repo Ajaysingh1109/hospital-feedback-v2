@@ -10,9 +10,20 @@ settings = get_settings()
 
 
 def ensure_audio_dir() -> Path:
-    p = Path(settings.AUDIO_STORAGE_DIR).resolve()
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    try:
+        p = Path(settings.AUDIO_STORAGE_DIR).resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    except (PermissionError, OSError):
+        # Fallback to /tmp/audio or local ./data/audio if persistent disk is unmounted / not permitted
+        fallback = Path("/tmp/audio").resolve()
+        try:
+            fallback.mkdir(parents=True, exist_ok=True)
+            return fallback
+        except Exception:
+            local_fallback = Path("./data/audio").resolve()
+            local_fallback.mkdir(parents=True, exist_ok=True)
+            return local_fallback
 
 
 def compute_sha256(data: bytes) -> str:

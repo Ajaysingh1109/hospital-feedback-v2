@@ -82,3 +82,14 @@ test-results/
 playwright-report/
 coverage/
 *.tsbuildinfo
+
+# ================================
+# Android Native Build
+# ================================
+.gradle/
+**/android/.gradle/
+**/android/**/build/
+**/android/local.properties
+*.apk
+*.aab
+*.dex
