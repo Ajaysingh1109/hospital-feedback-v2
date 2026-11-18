@@ -1,18 +1,12 @@
 services:
-  # 1. FastAPI Cloud Backend Service
+  # Unified FastAPI Backend + Compiled React Frontend Docker Service
   - type: web
     name: hospital-feedback-v2
-    env: python
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /health
     autoDeploy: true
-    # Persistent Disk (Requires Render Starter tier or above. On Free tier, leave commented; /tmp/audio fallback is automatic)
-    # disk:
-    #   name: hospital-feedback-data
-    #   mountPath: /app/data
-    #   sizeGB: 10
     envVars:
       - key: ENVIRONMENT
         value: production
@@ -23,11 +17,11 @@ services:
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "480"
       - key: DATABASE_URL
-        sync: false  # Configure external PostgreSQL (e.g. Supabase Session Pooler) in Render Dashboard
+        sync: false  # Configure external Supabase Session Pooler PostgreSQL URI in Render Dashboard
       - key: CORS_ORIGINS
-        sync: false  # Configure exact production frontend domain(s) (e.g. https://your-frontend.vercel.app)
+        value: "*"
       - key: AUDIO_STORAGE_DIR
-        value: /tmp/audio  # Defaults to /tmp/audio on Free tier; set to /app/data/audio when disk is mounted
+        value: /tmp/audio  # Transient processing staging only; persistent audio is stored in Supabase Storage
       - key: AUDIO_RETENTION_POLICY
         value: keep
       - key: AI_PROVIDER
@@ -50,26 +44,9 @@ services:
         value: "Duty Feedback Nurse"
       - key: CRON_SECRET
         generateValue: true
-
-  # 2. Scheduled 12-Hour Retention Purge Worker (Render Cron Job)
-  # Triggers the automated retention purge periodically via secure webhook.
-  - type: cron
-    name: hospital-feedback-v2-retention-cron
-    env: python
-    rootDir: backend
-    schedule: "0 * * * *"  # Runs hourly
-    buildCommand: pip install requests
-    startCommand: python -c "import os, requests; url = os.getenv('BACKEND_INTERNAL_URL', 'http://hospital-feedback-v2:8001'); key = os.getenv('CRON_SECRET'); r = requests.post(f'{url}/api/v1/admin/retention/cron-trigger', headers={'X-Cron-Key': key}, timeout=30); print('Retention Purge Status:', r.status_code)"
-    envVars:
-      - key: CRON_SECRET
-        fromService:
-          type: web
-          name: hospital-feedback-v2
-          envVarKey: CRON_SECRET
-
-# databases:
-#   # Optional Render PostgreSQL (expires in 30 days on Free tier; Supabase Free tier recommended)
-#   - name: hospital-feedback-db
-#     databaseName: hospital_feedback
-#     user: hospital_user
-#     plan: free
+      - key: SUPABASE_URL
+        sync: false  # Configure Supabase Project URL in Render Dashboard
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false  # Configure Supabase Service Role Secret in Render Dashboard
+      - key: SUPABASE_STORAGE_BUCKET
+        value: hospital-audio-private

@@ -39,8 +39,8 @@ COPY --from=frontend-builder /build/dist /app/frontend/dist
 # Ensure private audio storage directory exists
 RUN mkdir -p /app/data/audio /tmp/audio
 
-# Expose default HTTP port for Koyeb (8000)
-EXPOSE 8000
+# Expose HTTP port for Render
+EXPOSE 10000
 
-# Start FastAPI server on dynamic $PORT injected by Koyeb (defaults to 8000)
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start FastAPI server on dynamic $PORT injected by Render (defaults to 10000)
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
