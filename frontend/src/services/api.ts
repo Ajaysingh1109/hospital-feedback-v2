@@ -21,7 +21,7 @@ const IS_NATIVE =
 export const API_BASE = ENV_API_URL
   ? `${ENV_API_URL.replace(/\/+$/, "")}/api/v1`
   : IS_NATIVE
-  ? "https://hospital-feedback-v2.koyeb.app/api/v1"
+  ? "https://hospital-feedback-v2-2.onrender.com/api/v1"
   : "/api/v1";
 
 function getToken(): string | null {
