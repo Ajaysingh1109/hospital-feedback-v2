@@ -26,8 +26,14 @@ def normalize_database_url(url: str) -> str:
     """
     if not url:
         env = os.getenv("ENVIRONMENT", "").strip().lower()
-        is_render = os.getenv("RENDER") == "true" or os.getenv("RENDER_SERVICE_NAME") is not None
-        if env == "production" or is_render:
+        is_cloud = (
+            os.getenv("RENDER") == "true"
+            or os.getenv("RENDER_SERVICE_NAME") is not None
+            or os.getenv("KOYEB_APP_NAME") is not None
+            or os.getenv("KOYEB_SERVICE_NAME") is not None
+            or os.getenv("KOYEB_PUBLIC_DOMAIN") is not None
+        )
+        if env == "production" or is_cloud:
             return ""
         return "sqlite:///./data/hospital_feedback.db"
 
@@ -155,6 +161,7 @@ else:
         db_url,
         echo=False,
         pool_pre_ping=True,
+        pool_recycle=300,
         pool_size=10,
         max_overflow=20,
         future=True,

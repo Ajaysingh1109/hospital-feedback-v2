@@ -79,10 +79,16 @@ class Settings(BaseSettings):
         if v and v != "sqlite:///./data/hospital_feedback.db":
             return v.strip()
 
-        # In production / on Render, do NOT default to SQLite if remote PostgreSQL is missing
+        # In production / on Cloud (Render, Koyeb, etc.), do NOT default to SQLite if remote PostgreSQL is missing
         env = os.getenv("ENVIRONMENT", "").strip().lower()
-        is_render = os.getenv("RENDER") == "true" or os.getenv("RENDER_SERVICE_NAME") is not None
-        if env == "production" or is_render:
+        is_cloud = (
+            os.getenv("RENDER") == "true"
+            or os.getenv("RENDER_SERVICE_NAME") is not None
+            or os.getenv("KOYEB_APP_NAME") is not None
+            or os.getenv("KOYEB_SERVICE_NAME") is not None
+            or os.getenv("KOYEB_PUBLIC_DOMAIN") is not None
+        )
+        if env == "production" or is_cloud:
             return ""
         return "sqlite:///./data/hospital_feedback.db"
 

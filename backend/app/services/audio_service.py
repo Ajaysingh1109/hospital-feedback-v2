@@ -1,11 +1,14 @@
 import hashlib
+import logging
 import os
 from pathlib import Path
 from typing import Optional, Tuple
+import httpx
 
 from ..core.config import get_settings
 from ..schemas import AudioQualityReport
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
@@ -55,10 +58,116 @@ def check_audio_quality(file_bytes: bytes, file_ext: str = ".webm") -> AudioQual
     )
 
 
+def _get_supabase_storage_config() -> Optional[Tuple[str, str, str]]:
+    """
+    Returns (supabase_url, service_role_key, bucket_name) if private Supabase
+    Storage is configured in environment variables, else None.
+    """
+    supabase_url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    # Service role key or storage key for authorized backend operations
+    supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or os.getenv("SUPABASE_KEY", "").strip()
+    bucket_name = os.getenv("SUPABASE_STORAGE_BUCKET", "hospital-audio-private").strip()
+
+    if supabase_url and supabase_key:
+        return supabase_url, supabase_key, bucket_name
+    return None
+
+
+def upload_to_supabase_storage(file_bytes: bytes, file_name: str, content_type: str = "audio/webm") -> bool:
+    """
+    Uploads audio file to private Supabase Storage bucket for persistence
+    across ephemeral cloud container restarts (e.g. Koyeb Free Tier).
+    """
+    cfg = _get_supabase_storage_config()
+    if not cfg:
+        return False
+
+    supabase_url, supabase_key, bucket_name = cfg
+    endpoint = f"{supabase_url}/storage/v1/object/{bucket_name}/{file_name}"
+    headers = {
+        "Authorization": f"Bearer {supabase_key}",
+        "apikey": supabase_key,
+        "Content-Type": content_type,
+        "x-upsert": "true",
+    }
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(endpoint, content=file_bytes, headers=headers)
+            if resp.status_code in (200, 201):
+                logger.info(f"[Private Audio Storage] Successfully backed up {file_name} to Supabase bucket '{bucket_name}'.")
+                return True
+            else:
+                logger.warning(f"[Private Audio Storage] Upload failed ({resp.status_code}): {resp.text}")
+    except Exception as e:
+        logger.warning(f"[Private Audio Storage] Exception uploading {file_name} to Supabase Storage: {e}")
+
+    return False
+
+
+def fetch_from_supabase_storage(file_name: str) -> Optional[bytes]:
+    """
+    Fetches audio bytes from private Supabase Storage bucket if local file
+    was unlinked or container was restarted on ephemeral cloud hosting.
+    """
+    cfg = _get_supabase_storage_config()
+    if not cfg:
+        return None
+
+    supabase_url, supabase_key, bucket_name = cfg
+    endpoint = f"{supabase_url}/storage/v1/object/authenticated/{bucket_name}/{file_name}"
+    headers = {
+        "Authorization": f"Bearer {supabase_key}",
+        "apikey": supabase_key,
+    }
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(endpoint, headers=headers)
+            if resp.status_code == 200:
+                logger.info(f"[Private Audio Storage] Restored {file_name} from Supabase bucket '{bucket_name}'.")
+                return resp.content
+    except Exception as e:
+        logger.warning(f"[Private Audio Storage] Exception fetching {file_name} from Supabase: {e}")
+
+    return None
+
+
+def delete_from_supabase_storage(file_name: str) -> bool:
+    """
+    Permanently deletes audio file from private Supabase Storage bucket
+    during automated 12-hour retention purge.
+    """
+    cfg = _get_supabase_storage_config()
+    if not cfg:
+        return False
+
+    supabase_url, supabase_key, bucket_name = cfg
+    endpoint = f"{supabase_url}/storage/v1/object/{bucket_name}"
+    headers = {
+        "Authorization": f"Bearer {supabase_key}",
+        "apikey": supabase_key,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.request("DELETE", endpoint, json={"prefixes": [file_name]}, headers=headers)
+            if resp.status_code in (200, 204):
+                logger.info(f"[Private Audio Storage] Purged {file_name} from Supabase bucket '{bucket_name}'.")
+                return True
+    except Exception as e:
+        logger.warning(f"[Private Audio Storage] Exception deleting {file_name} from Supabase: {e}")
+
+    return False
+
+
 def save_audio_file(file_bytes: bytes, client_uuid: str, ext: str = ".webm") -> Tuple[str, str, int]:
     """
     Saves audio file into private storage directory.
-    Returns (relative_path, sha256_hash, file_size)
+    If private Supabase Storage is configured, also backs up to bucket
+    to survive ephemeral container restarts.
+    Returns (target_path, sha256_hash, file_size)
     """
     audio_dir = ensure_audio_dir()
     file_name = f"{client_uuid}{ext}"
@@ -68,6 +177,10 @@ def save_audio_file(file_bytes: bytes, client_uuid: str, ext: str = ".webm") -> 
         f.write(file_bytes)
 
     sha256_hash = compute_sha256(file_bytes)
+
+    # Optional private cloud backup for ephemeral instances
+    upload_to_supabase_storage(file_bytes, file_name, content_type="audio/webm")
+
     return str(target_path), sha256_hash, len(file_bytes)
 
 
@@ -78,9 +191,12 @@ def delete_audio_file_if_policy(file_path: Optional[str]) -> bool:
     """
     if settings.AUDIO_RETENTION_POLICY == "delete_after_processing" and file_path:
         try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                return True
+            p = Path(file_path)
+            if p.exists():
+                p.unlink()
+            # Also purge from Supabase storage if backed up
+            delete_from_supabase_storage(p.name)
+            return True
         except Exception:
             pass
     return False

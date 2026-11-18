@@ -119,6 +119,17 @@ def stream_audio(
 
     file_path = Path(audio_rec.file_path)
     if not file_path.exists():
+        # Check if preserved in private Supabase Storage across ephemeral container restarts (e.g. Koyeb Free Tier)
+        from ...services.audio_service import fetch_from_supabase_storage
+        file_bytes = fetch_from_supabase_storage(file_path.name)
+        if file_bytes:
+            from fastapi.responses import Response
+            return Response(
+                content=file_bytes,
+                media_type=audio_rec.mime_type or "audio/webm",
+                headers={"Content-Disposition": f'inline; filename="{file_path.name}"'},
+            )
+
         raise HTTPException(
             status_code=404,
             detail="Audio recording file has been purged per hospital data retention policy.",

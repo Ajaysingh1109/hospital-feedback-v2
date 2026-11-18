@@ -53,7 +53,13 @@ async def scheduled_retention_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Hospital Feedback System Database...")
-    is_prod = settings.ENVIRONMENT == "production" or os.getenv("RENDER") == "true"
+    is_prod = (
+        settings.ENVIRONMENT == "production"
+        or os.getenv("RENDER") == "true"
+        or os.getenv("KOYEB_APP_NAME") is not None
+        or os.getenv("KOYEB_SERVICE_NAME") is not None
+        or os.getenv("KOYEB_PUBLIC_DOMAIN") is not None
+    )
     db_ready = False
     max_retries = 3
     from sqlalchemy import text
@@ -170,7 +176,13 @@ from sqlalchemy import text
 
 @app.get("/health")
 def health_check():
-    is_prod = settings.ENVIRONMENT == "production" or os.getenv("RENDER") == "true"
+    is_prod = (
+        settings.ENVIRONMENT == "production"
+        or os.getenv("RENDER") == "true"
+        or os.getenv("KOYEB_APP_NAME") is not None
+        or os.getenv("KOYEB_SERVICE_NAME") is not None
+        or os.getenv("KOYEB_PUBLIC_DOMAIN") is not None
+    )
     diag = get_database_diagnostics()
     db_status = "connected"
     db_error = None
@@ -192,7 +204,7 @@ def health_check():
     if is_prod:
         if engine.dialect.name != "postgresql":
             is_healthy = False
-            db_error = db_error or "Production environment requires PostgreSQL database dialect, but SQLite is active. Please configure DATABASE_URL in Render dashboard."
+            db_error = db_error or "Production environment requires PostgreSQL database dialect, but SQLite is active. Please configure DATABASE_URL in cloud dashboard."
 
     response_payload = {
         "status": "healthy" if is_healthy else "unhealthy",
@@ -212,14 +224,20 @@ def health_check():
 
 
 # Static Frontend Mount for Unified Single-Server Deployment
-static_dir = Path(__file__).parent.parent.parent / "frontend" / "dist"
-if static_dir.exists():
+static_dir_candidates = [
+    Path(__file__).parent.parent.parent / "frontend" / "dist",
+    Path(__file__).parent.parent / "frontend" / "dist",
+    Path("/app/frontend/dist"),
+    Path("./frontend/dist"),
+]
+static_dir = next((p for p in static_dir_candidates if p.exists() and (p / "index.html").exists()), None)
+if static_dir:
     app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
     @app.exception_handler(404)
     async def not_found_handler(request: Request, exc):
         index_file = static_dir / "index.html"
-        if index_file.exists() and not request.url.path.startswith("/api"):
+        if index_file.exists() and not request.url.path.startswith("/api") and not request.url.path.startswith("/health"):
             return FileResponse(index_file)
         detail = getattr(exc, "detail", "Not found")
         return JSONResponse(status_code=404, content={"detail": detail})

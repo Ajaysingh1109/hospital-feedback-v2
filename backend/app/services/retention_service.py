@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from ..core.config import get_settings
 from ..models import AuditLog, Feedback, FeedbackAudio, User
 from .audit_service import log_audit
-from .audio_service import ensure_audio_dir
+from .audio_service import delete_from_supabase_storage, ensure_audio_dir
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -89,6 +89,15 @@ def purge_single_feedback(
                 logger.info(f"[Retention] Successfully deleted audio file: {path_str}")
         except Exception as e:
             logger.warning(f"[Retention] Could not delete audio file {path_str}: {e}")
+
+    # Also purge from private Supabase Storage if backed up
+    try:
+        delete_from_supabase_storage(f"{client_uuid}.webm")
+        delete_from_supabase_storage(f"{fb_id}.webm")
+        if fb.audio and fb.audio.file_path:
+            delete_from_supabase_storage(Path(fb.audio.file_path).name)
+    except Exception as e:
+        logger.warning(f"[Retention] Notice deleting from private cloud storage: {e}")
 
     # 2. Sanitize any historical audit logs matching this feedback so patient details are NOT retained
     try:
