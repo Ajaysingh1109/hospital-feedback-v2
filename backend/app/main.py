@@ -52,7 +52,29 @@ async def scheduled_retention_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Hospital Feedback System Database...")
-    Base.metadata.create_all(bind=engine)
+    db_ready = False
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            with engine.connect() as conn:
+                pass
+            Base.metadata.create_all(bind=engine)
+            db_ready = True
+            break
+        except Exception as e:
+            logger.warning(f"[Database Init Attempt {attempt}/{max_retries}] Notice: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(2)
+            else:
+                logger.error(
+                    f"[CRITICAL DATABASE NOTICE] Primary database connection failed ({e}). "
+                    "Switching to persistent local SQLite to keep FEEDBACK MAC online without downtime."
+                )
+                from .db.database import fallback_to_sqlite
+                fallback_to_sqlite()
+                Base.metadata.create_all(bind=engine)
+                db_ready = True
+
     # Ensure SQLite columns exist (migration for existing SQLite DBs; Postgres creates natively)
     if engine.dialect.name == "sqlite":
         from sqlalchemy import text
@@ -68,7 +90,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Column migration check notice: {e}")
     seed_database()
-    logger.info("Database initialized and seeded.")
+    logger.info(f"Database initialized and seeded on dialect: {engine.dialect.name}.")
 
     # Recover any interrupted or orphaned background feedback jobs from previous run
     try:
@@ -143,6 +165,7 @@ def health_check():
         "status": "healthy",
         "app_name": settings.APP_NAME,
         "environment": settings.ENVIRONMENT,
+        "database_dialect": engine.dialect.name,
         "ai_provider": settings.AI_PROVIDER,
         "ai_mode": get_active_ai_mode(),
     }

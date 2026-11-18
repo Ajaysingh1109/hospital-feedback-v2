@@ -130,3 +130,52 @@ def test_database_url_normalization_for_psycopg2():
     )
     assert normalize_database_url("sqlite:///:memory:") == "sqlite:///:memory:"
 
+    # 7. Passwords with other special characters: '#', '%', ':'
+    special_char_url = "postgresql://postgres.proj:Test#Pass%20word:123@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+    norm_special = normalize_database_url(special_char_url)
+    assert "sslmode=require" in norm_special
+    parsed_special = make_url(norm_special)
+    assert parsed_special.host == "aws-0-ap-south-1.pooler.supabase.com"
+    assert parsed_special.port == 5432
+    assert parsed_special.username == "postgres.proj"
+    assert parsed_special.password == "Test#Pass word:123"
+
+    # 8. Invalid host 'po' fallback guard to prevent boot crash
+    invalid_po_url = "postgresql://postgres.proj:mypass@po:5432/postgres"
+    assert normalize_database_url(invalid_po_url) == "sqlite:///./data/hospital_feedback.db"
+
+    # 9. Empty / None URL fallback
+    assert normalize_database_url("") == "sqlite:///./data/hospital_feedback.db"
+    assert normalize_database_url(None) == "sqlite:///./data/hospital_feedback.db"
+
+
+def test_database_emergency_sqlite_fallback():
+    """
+    Verifies that fallback_to_sqlite dynamically rebinds the engine and SessionLocal
+    to SQLite to guarantee 100% server uptime even if remote PostgreSQL fails.
+    """
+    from app.db.database import fallback_to_sqlite, engine, SessionLocal
+
+    res = fallback_to_sqlite()
+    assert res.startswith("sqlite")
+    assert engine.dialect.name == "sqlite"
+    with SessionLocal() as session:
+        assert session.bind.dialect.name == "sqlite"
+
+
+def test_database_url_environment_variable_fallbacks(monkeypatch):
+    """
+    Verifies that Settings resolves POSTGRES_URL, SUPABASE_DB_URL, or DATABASE_URL seamlessly.
+    """
+    from app.core.config import Settings
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("POSTGRES_URL", "postgresql://user:pass@host:5432/db")
+    s = Settings()
+    assert s.DATABASE_URL == "postgresql://user:pass@host:5432/db"
+
+    monkeypatch.delenv("POSTGRES_URL", raising=False)
+    monkeypatch.setenv("SUPABASE_DB_URL", "postgresql://supabase_user:pass@supabase_host:5432/postgres")
+    s2 = Settings()
+    assert s2.DATABASE_URL == "postgresql://supabase_user:pass@supabase_host:5432/postgres"
+

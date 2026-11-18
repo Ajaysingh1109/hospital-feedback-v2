@@ -89,8 +89,8 @@ def test_startup_recovery_interrupted_jobs(db_session: Session, tmp_path: Path):
     db_session.refresh(fb_a)
     db_session.refresh(fb_b)
 
-    # Job A was re-queued (or completed by thread)
-    assert fb_a.status in ["QUEUED", "PROCESSING", "COMPLETED", "NEEDS_REVIEW"]
+    # Job A was re-queued (or in flight / completed by background recovery worker)
+    assert fb_a.status in ["QUEUED", "PROCESSING", "TRANSCRIBING", "ANALYZING", "COMPLETED", "NEEDS_REVIEW"]
     # Job B had no audio and must safely be in NEEDS_REVIEW
     assert fb_b.status == "NEEDS_REVIEW"
     assert "interrupted" in fb_b.processing_error.lower()

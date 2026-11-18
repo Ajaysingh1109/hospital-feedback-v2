@@ -1,13 +1,13 @@
 services:
   # 1. FastAPI Cloud Backend Service
   - type: web
-    name: hospital-feedback-api
+    name: hospital-feedback-v2
     env: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    autoDeploy: false
+    autoDeploy: true
     # Persistent Disk (Requires Render Starter tier or above. On Free tier, leave commented; /tmp/audio fallback is automatic)
     # disk:
     #   name: hospital-feedback-data
@@ -54,17 +54,17 @@ services:
   # 2. Scheduled 12-Hour Retention Purge Worker (Render Cron Job)
   # Triggers the automated retention purge periodically via secure webhook.
   - type: cron
-    name: hospital-feedback-retention-cron
+    name: hospital-feedback-v2-retention-cron
     env: python
     rootDir: backend
     schedule: "0 * * * *"  # Runs hourly
     buildCommand: pip install requests
-    startCommand: python -c "import os, requests; url = os.getenv('BACKEND_INTERNAL_URL', 'http://hospital-feedback-api:8001'); key = os.getenv('CRON_SECRET'); r = requests.post(f'{url}/api/v1/admin/retention/cron-trigger', headers={'X-Cron-Key': key}, timeout=30); print('Retention Purge Status:', r.status_code)"
+    startCommand: python -c "import os, requests; url = os.getenv('BACKEND_INTERNAL_URL', 'http://hospital-feedback-v2:8001'); key = os.getenv('CRON_SECRET'); r = requests.post(f'{url}/api/v1/admin/retention/cron-trigger', headers={'X-Cron-Key': key}, timeout=30); print('Retention Purge Status:', r.status_code)"
     envVars:
       - key: CRON_SECRET
         fromService:
           type: web
-          name: hospital-feedback-api
+          name: hospital-feedback-v2
           envVarKey: CRON_SECRET
 
 # databases:

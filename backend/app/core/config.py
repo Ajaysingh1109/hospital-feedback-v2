@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./data/hospital_feedback.db"
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def resolve_database_url(cls, v: Optional[str]) -> str:
+        for key in ["DATABASE_URL", "POSTGRES_URL", "SUPABASE_DB_URL", "DATABASE_INTERNAL_URL", "DATABASE_EXTERNAL_URL"]:
+            val = os.getenv(key, "").strip()
+            if val:
+                return val
+        if v and v != "sqlite:///./data/hospital_feedback.db":
+            return v.strip()
+        return "sqlite:///./data/hospital_feedback.db"
+
     # CORS
     CORS_ORIGINS: Union[str, List[str]] = [
         "http://localhost:5174",

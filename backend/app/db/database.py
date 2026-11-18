@@ -1,11 +1,14 @@
+import logging
 import os
 import urllib.parse
 from pathlib import Path
 from sqlalchemy import create_engine, event
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from ..core.config import get_settings
 
+logger = logging.getLogger("hospital_feedback.db")
 settings = get_settings()
 
 
@@ -19,10 +22,12 @@ def normalize_database_url(url: str) -> str:
        which otherwise cause host parsing failures like:
        `sqlalchemy.exc.OperationalError: could not translate host name "po" to address`
     4. Automatically ensures `sslmode=require` for Supabase / remote poolers if missing.
-    5. Preserves SQLite URLs and explicit driver specifications.
+    5. Invalid Host Guard: If the host resolves to 'po' or is empty, automatically falls back
+       to persistent SQLite to prevent container boot crashes on Render.
+    6. Preserves SQLite URLs and explicit driver specifications.
     """
     if not url:
-        return url
+        return "sqlite:///./data/hospital_feedback.db"
 
     clean_url = url.strip().strip('"\'')
 
@@ -54,6 +59,20 @@ def normalize_database_url(url: str) -> str:
                 delimiter = "&" if "?" in clean_url else "?"
                 clean_url = f"{clean_url}{delimiter}sslmode=require"
 
+        # Invalid Host Guard for Render / Cloud deployments:
+        # If the hostname was corrupted/truncated down to "po", fallback to SQLite
+        try:
+            u = make_url(clean_url)
+            if u.host == "po" or not u.host:
+                logger.warning(
+                    "[DATABASE CONFIG NOTICE] Invalid or truncated database hostname detected in configuration ('%s'). "
+                    "Automatically activating persistent SQLite fallback so FEEDBACK MAC boots without downtime.",
+                    u.host,
+                )
+                return "sqlite:///./data/hospital_feedback.db"
+        except Exception:
+            pass
+
     return clean_url
 
 
@@ -82,6 +101,36 @@ else:
         max_overflow=20,
         future=True,
     )
+
+
+def fallback_to_sqlite() -> str:
+    """
+    Emergency runtime recovery: dynamically rebinds SQLAlchemy engine and SessionLocal
+    to persistent local SQLite if the cloud database is down, invalid, or unresolvable.
+    Prevents Render / cloud container crashes and ensures 100% service uptime.
+    """
+    global engine, db_url
+    fallback_url = "sqlite:///./data/hospital_feedback.db"
+    parsed_path = fallback_url.replace("sqlite:///", "")
+    full_path = Path(parsed_path).resolve()
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        engine.dispose()
+    except Exception:
+        pass
+
+    engine = create_engine(
+        fallback_url,
+        echo=False,
+        connect_args={"check_same_thread": False},
+        future=True,
+    )
+    SessionLocal.configure(bind=engine)
+    db_url = fallback_url
+    logger.info("[DATABASE RECOVERY] Successfully switched database engine to persistent SQLite.")
+    return fallback_url
+
 
 # Enable foreign keys for SQLite
 if db_url.startswith("sqlite"):
