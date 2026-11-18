@@ -54,12 +54,31 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def resolve_database_url(cls, v: Optional[str]) -> str:
-        for key in ["DATABASE_URL", "POSTGRES_URL", "SUPABASE_DB_URL", "DATABASE_INTERNAL_URL", "DATABASE_EXTERNAL_URL"]:
+        candidates = [
+            "DATABASE_URL",
+            "POSTGRES_URL",
+            "SUPABASE_DB_URL",
+            "SUPABASE_DATABASE_URL",
+            "DB_URL",
+            "DATABASE_EXTERNAL_URL",
+            "DATABASE_INTERNAL_URL",
+        ]
+        # First pass: prefer complete remote database URLs (contains credentials and host)
+        for key in candidates:
+            val = os.getenv(key, "").strip()
+            if val and "://" in val and not val.startswith("sqlite"):
+                if "@" in val and len(val) > 15:
+                    return val
+
+        # Second pass: accept any set candidate
+        for key in candidates:
             val = os.getenv(key, "").strip()
             if val:
                 return val
+
         if v and v != "sqlite:///./data/hospital_feedback.db":
             return v.strip()
+
         # In production / on Render, do NOT default to SQLite if remote PostgreSQL is missing
         env = os.getenv("ENVIRONMENT", "").strip().lower()
         is_render = os.getenv("RENDER") == "true" or os.getenv("RENDER_SERVICE_NAME") is not None

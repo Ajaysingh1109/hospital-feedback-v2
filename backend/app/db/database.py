@@ -69,11 +69,35 @@ def get_database_diagnostics() -> dict:
     Returns masked, security-safe database configuration and connectivity metadata.
     Never exposes passwords, tokens, or credentials.
     """
+    db_keys = [
+        "DATABASE_URL",
+        "POSTGRES_URL",
+        "SUPABASE_DB_URL",
+        "SUPABASE_DATABASE_URL",
+        "DB_URL",
+        "DATABASE_EXTERNAL_URL",
+        "DATABASE_INTERNAL_URL",
+    ]
+    env_summary = {}
+    for k in db_keys:
+        val = os.getenv(k, "").strip()
+        if val:
+            # Report presence and length without exposing content
+            env_summary[k] = {
+                "present": True,
+                "length": len(val),
+                "starts_with": val.split("://")[0] + "://" if "://" in val else val[:4],
+                "contains_at_symbol": "@" in val,
+            }
+        else:
+            env_summary[k] = {"present": False}
+
     if not db_url:
         return {
             "configured": False,
             "dialect": "none",
-            "message": "DATABASE_URL environment variable is not configured."
+            "message": "No valid PostgreSQL database connection string found in environment variables.",
+            "env_variables_detected": env_summary,
         }
 
     if db_url.startswith("sqlite"):
@@ -82,6 +106,7 @@ def get_database_diagnostics() -> dict:
             "dialect": "sqlite",
             "is_remote": False,
             "path": db_url,
+            "env_variables_detected": env_summary,
         }
 
     try:
@@ -95,12 +120,14 @@ def get_database_diagnostics() -> dict:
             "database": u.database,
             "username": u.username,
             "sslmode": u.query.get("sslmode", None),
+            "env_variables_detected": env_summary,
         }
     except Exception as e:
         return {
             "configured": False,
             "dialect": "unknown",
             "error": str(e),
+            "env_variables_detected": env_summary,
         }
 
 
