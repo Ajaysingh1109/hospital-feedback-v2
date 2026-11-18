@@ -22,11 +22,13 @@ def normalize_database_url(url: str) -> str:
        which otherwise cause host parsing failures like:
        `sqlalchemy.exc.OperationalError: could not translate host name "po" to address`
     4. Automatically ensures `sslmode=require` for Supabase / remote poolers if missing.
-    5. Invalid Host Guard: If the host resolves to 'po' or is empty, automatically falls back
-       to persistent SQLite to prevent container boot crashes on Render.
-    6. Preserves SQLite URLs and explicit driver specifications.
+    5. Preserves SQLite URLs and explicit driver specifications.
     """
     if not url:
+        env = os.getenv("ENVIRONMENT", "").strip().lower()
+        is_render = os.getenv("RENDER") == "true" or os.getenv("RENDER_SERVICE_NAME") is not None
+        if env == "production" or is_render:
+            return ""
         return "sqlite:///./data/hospital_feedback.db"
 
     clean_url = url.strip().strip('"\'')
@@ -59,26 +61,55 @@ def normalize_database_url(url: str) -> str:
                 delimiter = "&" if "?" in clean_url else "?"
                 clean_url = f"{clean_url}{delimiter}sslmode=require"
 
-        # Invalid Host Guard for Render / Cloud deployments:
-        # If the hostname was corrupted/truncated down to "po", fallback to SQLite
-        try:
-            u = make_url(clean_url)
-            if u.host == "po" or not u.host:
-                logger.warning(
-                    "[DATABASE CONFIG NOTICE] Invalid or truncated database hostname detected in configuration ('%s'). "
-                    "Automatically activating persistent SQLite fallback so FEEDBACK MAC boots without downtime.",
-                    u.host,
-                )
-                return "sqlite:///./data/hospital_feedback.db"
-        except Exception:
-            pass
-
     return clean_url
+
+
+def get_database_diagnostics() -> dict:
+    """
+    Returns masked, security-safe database configuration and connectivity metadata.
+    Never exposes passwords, tokens, or credentials.
+    """
+    if not db_url:
+        return {
+            "configured": False,
+            "dialect": "none",
+            "message": "DATABASE_URL environment variable is not configured."
+        }
+
+    if db_url.startswith("sqlite"):
+        return {
+            "configured": True,
+            "dialect": "sqlite",
+            "is_remote": False,
+            "path": db_url,
+        }
+
+    try:
+        u = make_url(db_url)
+        return {
+            "configured": True,
+            "dialect": u.drivername,
+            "is_remote": True,
+            "host": u.host,
+            "port": u.port,
+            "database": u.database,
+            "username": u.username,
+            "sslmode": u.query.get("sslmode", None),
+        }
+    except Exception as e:
+        return {
+            "configured": False,
+            "dialect": "unknown",
+            "error": str(e),
+        }
 
 
 db_url = normalize_database_url(settings.DATABASE_URL)
 
-if db_url.startswith("sqlite"):
+if not db_url:
+    # If unconfigured in production, initialize in-memory SQLite engine so app can boot and report 503
+    engine = create_engine("sqlite:///:memory:", future=True)
+elif db_url.startswith("sqlite"):
     # Ensure local directory exists for SQLite
     parsed_path = db_url.replace("sqlite:///", "")
     if "./" in parsed_path or not os.path.isabs(parsed_path):

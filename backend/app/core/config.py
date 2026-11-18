@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
 
+    @field_validator("ENVIRONMENT", mode="before")
+    @classmethod
+    def resolve_environment(cls, v: Optional[str]) -> str:
+        env = (v or os.getenv("ENVIRONMENT", "")).strip().lower()
+        if not env and (os.getenv("RENDER") == "true" or os.getenv("RENDER_SERVICE_NAME")):
+            return "production"
+        return env or "development"
+
     # Security & JWT
     SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
@@ -52,6 +60,11 @@ class Settings(BaseSettings):
                 return val
         if v and v != "sqlite:///./data/hospital_feedback.db":
             return v.strip()
+        # In production / on Render, do NOT default to SQLite if remote PostgreSQL is missing
+        env = os.getenv("ENVIRONMENT", "").strip().lower()
+        is_render = os.getenv("RENDER") == "true" or os.getenv("RENDER_SERVICE_NAME") is not None
+        if env == "production" or is_render:
+            return ""
         return "sqlite:///./data/hospital_feedback.db"
 
     # CORS

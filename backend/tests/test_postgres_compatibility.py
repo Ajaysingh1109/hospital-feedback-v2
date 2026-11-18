@@ -140,13 +140,58 @@ def test_database_url_normalization_for_psycopg2():
     assert parsed_special.username == "postgres.proj"
     assert parsed_special.password == "Test#Pass word:123"
 
-    # 8. Invalid host 'po' fallback guard to prevent boot crash
-    invalid_po_url = "postgresql://postgres.proj:mypass@po:5432/postgres"
-    assert normalize_database_url(invalid_po_url) == "sqlite:///./data/hospital_feedback.db"
+    # 8. PostgreSQL URL with unusual host (e.g. 'po') preserves driver and sanitizes
+    po_url = "postgresql://postgres.proj:mypass@po:5432/postgres"
+    norm_po = normalize_database_url(po_url)
+    assert norm_po.startswith("postgresql+psycopg2://")
 
-    # 9. Empty / None URL fallback
+    # 9. Local SQLite development default
     assert normalize_database_url("") == "sqlite:///./data/hospital_feedback.db"
     assert normalize_database_url(None) == "sqlite:///./data/hospital_feedback.db"
+
+
+def test_database_diagnostics_security():
+    """
+    Verifies that get_database_diagnostics returns metadata without leaking credentials.
+    """
+    from app.db.database import get_database_diagnostics
+
+    diag = get_database_diagnostics()
+    assert "configured" in diag
+    assert "dialect" in diag
+    # Ensure password field is NEVER present in diagnostics
+    assert "password" not in diag
+    assert "pass" not in diag
+    assert "secret" not in diag
+
+
+def test_strict_production_health_check_blocks_sqlite_in_production(client, monkeypatch):
+    """
+    Verifies Section 1 & User Requirement:
+    In production, a missing or SQLite database connection CANNOT silently return 200.
+    It MUST return HTTP 503 with an explicit database_error notice.
+    """
+    from app.core.config import get_settings
+    settings = get_settings()
+
+    # Emulate production environment
+    monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+    response = client.get("/health")
+    data = response.json()
+
+    # Since test runner uses SQLite, in production this MUST be flagged unhealthy
+    assert response.status_code == 503
+    assert data["status"] == "unhealthy"
+    assert data["database_dialect"] == "sqlite"
+    assert "requires postgresql" in data["database_error"].lower()
+
+    # Now verify in development environment, SQLite is completely valid
+    monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+    dev_response = client.get("/health")
+    dev_data = dev_response.json()
+    assert dev_response.status_code == 200
+    assert dev_data["status"] == "healthy"
+    assert dev_data["database_status"] == "connected"
 
 
 def test_database_emergency_sqlite_fallback():

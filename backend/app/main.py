@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -52,12 +53,15 @@ async def scheduled_retention_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Hospital Feedback System Database...")
+    is_prod = settings.ENVIRONMENT == "production" or os.getenv("RENDER") == "true"
     db_ready = False
     max_retries = 3
+    from sqlalchemy import text
+
     for attempt in range(1, max_retries + 1):
         try:
             with engine.connect() as conn:
-                pass
+                conn.execute(text("SELECT 1"))
             Base.metadata.create_all(bind=engine)
             db_ready = True
             break
@@ -66,38 +70,41 @@ async def lifespan(app: FastAPI):
             if attempt < max_retries:
                 await asyncio.sleep(2)
             else:
-                logger.error(
-                    f"[CRITICAL DATABASE NOTICE] Primary database connection failed ({e}). "
-                    "Switching to persistent local SQLite to keep FEEDBACK MAC online without downtime."
-                )
-                from .db.database import fallback_to_sqlite
-                fallback_to_sqlite()
-                Base.metadata.create_all(bind=engine)
-                db_ready = True
+                if is_prod:
+                    logger.error(
+                        f"[CRITICAL PRODUCTION DATABASE ERROR] Failed to connect to PostgreSQL: {e}. "
+                        "Refusing to silently mask production database failure with SQLite."
+                    )
+                else:
+                    logger.warning("Local development fallback to SQLite.")
+                    from .db.database import fallback_to_sqlite
+                    fallback_to_sqlite()
+                    Base.metadata.create_all(bind=engine)
+                    db_ready = True
 
-    # Ensure SQLite columns exist (migration for existing SQLite DBs; Postgres creates natively)
-    if engine.dialect.name == "sqlite":
-        from sqlalchemy import text
+    if db_ready:
+        # Ensure SQLite columns exist (migration for existing SQLite DBs; Postgres creates natively)
+        if engine.dialect.name == "sqlite":
+            try:
+                with engine.connect() as conn:
+                    cols = [r[1] for r in conn.execute(text("PRAGMA table_info(feedback)")).fetchall()]
+                    if cols and "complaint" not in cols:
+                        conn.execute(text("ALTER TABLE feedback ADD COLUMN complaint TEXT DEFAULT 'Not Provided'"))
+                        conn.commit()
+                    if cols and "processing_error" not in cols:
+                        conn.execute(text("ALTER TABLE feedback ADD COLUMN processing_error TEXT"))
+                        conn.commit()
+            except Exception as e:
+                logger.warning(f"Column migration check notice: {e}")
+        seed_database()
+        logger.info(f"Database initialized and seeded on dialect: {engine.dialect.name}.")
+
+        # Recover any interrupted or orphaned background feedback jobs from previous run
         try:
-            with engine.connect() as conn:
-                cols = [r[1] for r in conn.execute(text("PRAGMA table_info(feedback)")).fetchall()]
-                if cols and "complaint" not in cols:
-                    conn.execute(text("ALTER TABLE feedback ADD COLUMN complaint TEXT DEFAULT 'Not Provided'"))
-                    conn.commit()
-                if cols and "processing_error" not in cols:
-                    conn.execute(text("ALTER TABLE feedback ADD COLUMN processing_error TEXT"))
-                    conn.commit()
+            with SessionLocal() as db:
+                recover_orphaned_feedback_jobs(db=db, engine_bind=engine)
         except Exception as e:
-            logger.warning(f"Column migration check notice: {e}")
-    seed_database()
-    logger.info(f"Database initialized and seeded on dialect: {engine.dialect.name}.")
-
-    # Recover any interrupted or orphaned background feedback jobs from previous run
-    try:
-        with SessionLocal() as db:
-            recover_orphaned_feedback_jobs(db=db, engine_bind=engine)
-    except Exception as e:
-        logger.error(f"[Startup Recovery] Exception during recovery check: {e}")
+            logger.error(f"[Startup Recovery] Exception during recovery check: {e}")
 
     # Start automated retention purge worker
     purge_task = asyncio.create_task(scheduled_retention_worker())
@@ -157,18 +164,51 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
+from .db.database import get_database_diagnostics
 from .services.ai.factory import get_active_ai_mode
+from sqlalchemy import text
 
 @app.get("/health")
 def health_check():
-    return {
-        "status": "healthy",
+    is_prod = settings.ENVIRONMENT == "production" or os.getenv("RENDER") == "true"
+    diag = get_database_diagnostics()
+    db_status = "connected"
+    db_error = None
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = "error"
+        err_str = str(e)
+        if "@" in err_str:
+            err_str = err_str.split("@")[-1]
+        db_error = f"{type(e).__name__}: {err_str}"
+
+    # Strict production health verification:
+    # 1. Database connection must be live and responsive
+    # 2. In production, database dialect MUST be PostgreSQL (never SQLite)
+    is_healthy = (db_status == "connected")
+    if is_prod:
+        if engine.dialect.name != "postgresql":
+            is_healthy = False
+            db_error = db_error or "Production environment requires PostgreSQL database dialect, but SQLite is active. Please configure DATABASE_URL in Render dashboard."
+
+    response_payload = {
+        "status": "healthy" if is_healthy else "unhealthy",
         "app_name": settings.APP_NAME,
         "environment": settings.ENVIRONMENT,
         "database_dialect": engine.dialect.name,
+        "database_status": db_status,
+        "database_diagnostic": diag,
         "ai_provider": settings.AI_PROVIDER,
         "ai_mode": get_active_ai_mode(),
     }
+    if db_error:
+        response_payload["database_error"] = db_error
+
+    status_code = 200 if is_healthy else 503
+    return JSONResponse(status_code=status_code, content=response_payload)
 
 
 # Static Frontend Mount for Unified Single-Server Deployment
