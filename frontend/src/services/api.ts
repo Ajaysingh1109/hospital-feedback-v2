@@ -14,7 +14,15 @@ import {
 // Empty string in development allows Vite proxy (/api -> http://localhost:8001).
 // In production or mobile standalone PWA, VITE_API_BASE_URL specifies the HTTPS cloud API domain.
 const ENV_API_URL = import.meta.env.VITE_API_BASE_URL;
-export const API_BASE = ENV_API_URL ? `${ENV_API_URL.replace(/\/+$/, "")}/api/v1` : "/api/v1";
+const IS_NATIVE =
+  typeof window !== "undefined" &&
+  Boolean((window as any).Capacitor?.isNativePlatform?.());
+
+export const API_BASE = ENV_API_URL
+  ? `${ENV_API_URL.replace(/\/+$/, "")}/api/v1`
+  : IS_NATIVE
+  ? "https://hospital-feedback-v2.onrender.com/api/v1"
+  : "/api/v1";
 
 function getToken(): string | null {
   return localStorage.getItem("hospital_auth_token");
