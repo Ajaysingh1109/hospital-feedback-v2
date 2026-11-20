@@ -247,7 +247,10 @@ class FeedbackCreate(BaseModel):
         clean = str(v).strip()
         if not clean:
             raise ValueError("Department is required.")
-        return clean
+        depts = [d.strip() for d in clean.split(",") if d.strip()]
+        if len(depts) > 4:
+            raise ValueError("Maximum 4 departments can be selected.")
+        return ", ".join(depts)
 
 
 class FeedbackCorrectionOut(BaseModel):

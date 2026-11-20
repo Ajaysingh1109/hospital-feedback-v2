@@ -60,38 +60,46 @@ def get_deterministic_hod(department_name: str, db: Optional[Session] = None) ->
     The AI does NOT decide HOD.
     If a department has no configured HOD: returns "HOD Not Configured".
     Never guesses.
+    Supports single or multiple comma-separated departments (up to 4).
     """
     if not department_name or not department_name.strip():
         return "HOD Not Configured"
 
-    dept_clean = department_name.strip()
-    dept_key = dept_clean.lower()
+    # Support multiple departments separated by comma
+    depts = [d.strip() for d in department_name.split(",") if d.strip()]
+    if not depts:
+        return "HOD Not Configured"
 
-    # 1. Check dynamic HODMapping database table first (configured by Admin)
-    if db is not None:
-        try:
-            mapping = db.scalar(
-                select(HODMapping).where(
-                    HODMapping.department_name.ilike(dept_clean),
-                    HODMapping.is_active == True,
+    def _resolve_single_hod(dept_clean: str) -> str:
+        dept_key = dept_clean.lower()
+        if db is not None:
+            try:
+                mapping = db.scalar(
+                    select(HODMapping).where(
+                        HODMapping.department_name.ilike(dept_clean),
+                        HODMapping.is_active == True,
+                    )
                 )
-            )
-            if mapping and mapping.hod_name and mapping.hod_name.strip():
-                # If explicitly set in DB (e.g. Admin assigned an HOD to Security), use it
-                val = mapping.hod_name.strip()
-                if val:
-                    return val
-        except Exception:
-            pass
+                if mapping and mapping.hod_name and mapping.hod_name.strip():
+                    val = mapping.hod_name.strip()
+                    if val:
+                        return val
+            except Exception:
+                pass
 
-    # 2. Check canonical dictionary for fixed rules
-    if dept_key in DEFAULT_HOD_MAPPING:
-        return DEFAULT_HOD_MAPPING[dept_key]
+        if dept_key in DEFAULT_HOD_MAPPING:
+            return DEFAULT_HOD_MAPPING[dept_key]
 
-    # Check substring match only for fixed departments (e.g. "F&B / Dietary")
-    for key, hod in DEFAULT_HOD_MAPPING.items():
-        if key in dept_key:
-            return hod
+        for key, hod in DEFAULT_HOD_MAPPING.items():
+            if key in dept_key:
+                return hod
 
-    # If unmapped, DO NOT GUESS.
-    return "HOD Not Configured"
+        return "HOD Not Configured"
+
+    mapped_hods = []
+    for d in depts:
+        h = _resolve_single_hod(d)
+        if h not in mapped_hods:
+            mapped_hods.append(h)
+
+    return ", ".join(mapped_hods) if mapped_hods else "HOD Not Configured"

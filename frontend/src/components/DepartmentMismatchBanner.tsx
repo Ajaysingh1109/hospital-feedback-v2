@@ -14,10 +14,18 @@ export const DepartmentMismatchBanner: React.FC<DepartmentMismatchBannerProps> =
   onUseSelected,
   onUseAI,
 }) => {
+  const isIncluded = Boolean(
+    selectedDepartment &&
+    selectedDepartment
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .includes(aiDepartment.toLowerCase().trim())
+  );
+
   if (
     !aiDepartment ||
     !selectedDepartment ||
-    aiDepartment.toLowerCase().trim() === selectedDepartment.toLowerCase().trim()
+    isIncluded
   ) {
     return null;
   }

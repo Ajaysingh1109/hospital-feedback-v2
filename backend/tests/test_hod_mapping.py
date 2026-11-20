@@ -142,3 +142,52 @@ def test_ai_suggestion_does_not_override_hod(client: TestClient, staff_headers: 
     assert response.status_code == 201
     # For Clinical, HOD MUST be Tanveer Sir
     assert response.json()["hod_name"] == "Tanveer Sir"
+
+
+def test_multi_department_hod_mapping(client: TestClient, staff_headers: dict):
+    """
+    Verify selecting 2-4 departments deterministically maps all distinct HODs.
+    """
+    # 2 departments mapping to distinct HODs
+    payload1 = {
+        "client_uuid": str(uuid.uuid4()),
+        "uhid": "000MULTI1",
+        "patient_name": "Multi Patient 1",
+        "department": "Nursing, Housekeeping",
+    }
+    res1 = client.post("/api/v1/feedback", json=payload1, headers=staff_headers)
+    assert res1.status_code == 201
+    assert res1.json()["hod_name"] == "Reshmi Ma'am, Asha Ma'am"
+
+    # 2 departments mapping to same HOD (Asha Ma'am) should be deduplicated
+    payload2 = {
+        "client_uuid": str(uuid.uuid4()),
+        "uhid": "000MULTI2",
+        "patient_name": "Multi Patient 2",
+        "department": "Maintenance, F&B",
+    }
+    res2 = client.post("/api/v1/feedback", json=payload2, headers=staff_headers)
+    assert res2.status_code == 201
+    assert res2.json()["hod_name"] == "Asha Ma'am"
+
+    # 4 departments (max allowed)
+    payload3 = {
+        "client_uuid": str(uuid.uuid4()),
+        "uhid": "000MULTI3",
+        "patient_name": "Multi Patient 3",
+        "department": "Clinical, Nursing, IT, Maintenance",
+    }
+    res3 = client.post("/api/v1/feedback", json=payload3, headers=staff_headers)
+    assert res3.status_code == 201
+    assert res3.json()["hod_name"] == "Tanveer Sir, Reshmi Ma'am, Valay Sir, Asha Ma'am"
+
+    # More than 4 departments should fail validation
+    payload4 = {
+        "client_uuid": str(uuid.uuid4()),
+        "uhid": "000MULTI4",
+        "patient_name": "Multi Patient 4",
+        "department": "Clinical, Nursing, IT, Maintenance, Billing",
+    }
+    res4 = client.post("/api/v1/feedback", json=payload4, headers=staff_headers)
+    assert res4.status_code == 422
+

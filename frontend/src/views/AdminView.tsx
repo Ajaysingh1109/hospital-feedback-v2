@@ -1486,17 +1486,55 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                 {isEditing ? (
                   <div className="space-y-3 pt-2">
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                        Department (Re-maps HOD deterministically!)
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          Department(s) — Max 4 (Re-maps HOD deterministically!)
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-bold">
+                          {editForm.department ? editForm.department.split(",").map((s) => s.trim()).filter(Boolean).length : 0}/4 selected
+                        </span>
+                      </div>
+                      {editForm.department && (
+                        <div className="flex flex-wrap gap-1 mb-1.5 p-1.5 bg-slate-50 rounded-lg border border-slate-200">
+                          {editForm.department.split(",").map((s) => s.trim()).filter(Boolean).map((d) => (
+                            <span key={d} className="inline-flex items-center gap-1 bg-sky-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-md">
+                              {d}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const current = editForm.department.split(",").map((s) => s.trim()).filter(Boolean);
+                                  setEditForm({ ...editForm, department: current.filter((x) => x !== d).join(", ") });
+                                }}
+                                className="hover:bg-sky-700 rounded-full px-0.5"
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <select
-                        value={editForm.department}
-                        onChange={(e) => setEditForm({ ...editForm, department: e.target.value })}
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const current = editForm.department ? editForm.department.split(",").map((s) => s.trim()).filter(Boolean) : [];
+                            if (!current.includes(e.target.value)) {
+                              if (current.length >= 4) {
+                                alert("Maximum 4 departments can be selected.");
+                                return;
+                              }
+                              setEditForm({ ...editForm, department: [...current, e.target.value].join(", ") });
+                            }
+                          }
+                        }}
                         className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold"
                       >
-                        {masterData?.departments.map((d) => (
-                          <option key={d.id} value={d.name}>{d.name}</option>
-                        ))}
+                        <option value="">+ Add Department (Max 4)...</option>
+                        {masterData?.departments
+                          .filter((d) => !(editForm.department || "").split(",").map((s) => s.trim()).includes(d.name))
+                          .map((d) => (
+                            <option key={d.id} value={d.name}>{d.name}</option>
+                          ))}
                       </select>
                     </div>
 

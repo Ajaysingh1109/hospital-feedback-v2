@@ -28,6 +28,7 @@ import {
   Clock,
   Loader2,
   Layers,
+  Check,
 } from "lucide-react";
 import {
   fetchMasterData,
@@ -779,25 +780,71 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
   };
 
   // Deterministic HOD Preview (Point 1 & 6: Security is NOT Asha Ma'am)
+  // Supports single or multi-department selection (up to 4)
   const getHODPreview = (dept: string) => {
-    const clean = dept.toLowerCase().trim();
-    if (clean === "clinical") return "Tanveer Sir";
-    if (clean === "nursing") return "Reshmi Ma'am";
-    if (clean === "pharmacy") return "Vijay Sir";
-    if (clean === "it") return "Valay Sir";
-    if (
-      [
-        "maintenance",
-        "f&b",
-        "housekeeping",
-        "operations",
-        "billing",
-      ].includes(clean)
-    ) {
-      return "Asha Ma'am";
+    if (!dept || !dept.trim()) return "HOD Not Configured";
+    const depts = dept
+      .split(",")
+      .map((d) => d.trim().toLowerCase())
+      .filter(Boolean);
+    if (depts.length === 0) return "HOD Not Configured";
+
+    const mappedHods: string[] = [];
+    for (const clean of depts) {
+      let hod = "HOD Not Configured";
+      if (clean === "clinical") hod = "Tanveer Sir";
+      else if (clean === "nursing") hod = "Reshmi Ma'am";
+      else if (clean === "pharmacy") hod = "Vijay Sir";
+      else if (clean === "it") hod = "Valay Sir";
+      else if (
+        [
+          "maintenance",
+          "f&b",
+          "housekeeping",
+          "operations",
+          "billing",
+        ].includes(clean)
+      ) {
+        hod = "Asha Ma'am";
+      }
+      if (!mappedHods.includes(hod)) {
+        mappedHods.push(hod);
+      }
     }
-    // Security or other unmapped departments
-    return "HOD Not Configured";
+    return mappedHods.join(", ") || "HOD Not Configured";
+  };
+
+  // Selected departments array (max 4)
+  const selectedDepts = formData.department
+    ? formData.department
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+
+  const handleToggleDepartment = (deptName: string) => {
+    const trimmed = deptName.trim();
+    if (!trimmed) return;
+    if (selectedDepts.includes(trimmed)) {
+      const updated = selectedDepts.filter((d) => d !== trimmed).join(", ");
+      setFormData({ ...formData, department: updated });
+    } else {
+      if (selectedDepts.length >= 4) {
+        alert("Maximum 4 departments can be selected.");
+        return;
+      }
+      const updated = [...selectedDepts, trimmed].join(", ");
+      setFormData({ ...formData, department: updated });
+      if (formErrors.department) {
+        setFormErrors({ ...formErrors, department: "" });
+      }
+    }
+  };
+
+  const handleRemoveDepartment = (deptName: string) => {
+    const trimmed = deptName.trim();
+    const updated = selectedDepts.filter((d) => d !== trimmed).join(", ");
+    setFormData({ ...formData, department: updated });
   };
 
   const formatTimer = (sec: number) => {
@@ -1298,7 +1345,17 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   aiDepartment={aiResult.suggested_department}
                   selectedDepartment={formData.department}
                   onUseSelected={() => {}}
-                  onUseAI={() => setFormData({ ...formData, department: aiResult.suggested_department! })}
+                  onUseAI={() => {
+                    const aiDept = aiResult.suggested_department!;
+                    if (!selectedDepts.includes(aiDept)) {
+                      if (selectedDepts.length < 4) {
+                        const updated = [...selectedDepts, aiDept].join(", ");
+                        setFormData({ ...formData, department: updated });
+                      } else {
+                        setFormData({ ...formData, department: aiDept });
+                      }
+                    }
+                  }}
                 />
               )}
 
@@ -1342,37 +1399,116 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                 )}
               </div>
 
-              {/* Mandatory Department Selection */}
+              {/* Mandatory Department Selection (Supports up to 4 departments) */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Department <span className="text-red-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Department(s) <span className="text-red-500">*</span>
+                    <span className="text-[10px] font-normal text-slate-500 lowercase ml-1">
+                      (max 4)
+                    </span>
+                  </label>
+                  <span
+                    className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full transition ${
+                      selectedDepts.length >= 4
+                        ? "bg-amber-100 text-amber-800 border border-amber-300"
+                        : selectedDepts.length > 0
+                        ? "bg-sky-100 text-sky-800 border border-sky-200"
+                        : "bg-slate-100 text-slate-500 border border-slate-200"
+                    }`}
+                  >
+                    {selectedDepts.length}/4 Selected
+                  </span>
+                </div>
+
+                {/* Selected Department Badges */}
+                {selectedDepts.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2.5 p-2 bg-sky-50/70 rounded-2xl border border-sky-200 animate-fade-in">
+                    {selectedDepts.map((d) => (
+                      <span
+                        key={d}
+                        className="inline-flex items-center gap-1.5 bg-sky-600 text-white text-xs font-bold px-2.5 py-1 rounded-xl shadow-xs"
+                      >
+                        {d}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDepartment(d)}
+                          className="hover:bg-sky-700 rounded-full p-0.5 transition"
+                          title={`Remove ${d}`}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Dropdown Selector */}
                 <select
-                  required
-                  value={formData.department}
-                  onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleToggleDepartment(e.target.value);
+                    }
+                  }}
+                  disabled={selectedDepts.length >= 4}
                   className={`w-full px-4 py-3 bg-slate-50 border rounded-2xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-500 ${
                     formErrors.department ? "border-red-400 bg-red-50" : "border-slate-200"
-                  }`}
+                  } ${selectedDepts.length >= 4 ? "opacity-60 cursor-not-allowed" : ""}`}
                 >
-                  <option value="">-- Select Hospital Department --</option>
-                  {masterData.departments.map((d) => (
-                    <option key={d.id} value={d.name}>
-                      {d.name}
-                    </option>
-                  ))}
+                  <option value="">
+                    {selectedDepts.length >= 4
+                      ? "Maximum 4 departments reached"
+                      : selectedDepts.length === 0
+                      ? "-- Select Hospital Department (Max 4) --"
+                      : "+ Add Another Department (Up to 4)..."}
+                  </option>
+                  {masterData.departments
+                    .filter((d) => !selectedDepts.includes(d.name))
+                    .map((d) => (
+                      <option key={d.id} value={d.name}>
+                        {d.name}
+                      </option>
+                    ))}
                 </select>
+
+                {/* Quick Touch Chips for Mobile Staff */}
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {masterData.departments.map((d) => {
+                    const isSelected = selectedDepts.includes(d.name);
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => handleToggleDepartment(d.name)}
+                        className={`text-xs px-2.5 py-1 rounded-xl font-medium transition flex items-center gap-1 ${
+                          isSelected
+                            ? "bg-sky-700 text-white font-bold shadow-xs ring-1 ring-sky-500"
+                            : "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200"
+                        }`}
+                      >
+                        {isSelected && <Check className="w-3 h-3" />}
+                        {d.name}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 {formErrors.department && (
-                  <span className="text-red-600 text-xs mt-1 block font-medium">{formErrors.department}</span>
+                  <span className="text-red-600 text-xs mt-1.5 block font-medium">
+                    {formErrors.department}
+                  </span>
                 )}
               </div>
 
               {/* Deterministic HOD Live Preview */}
               {formData.department && (
                 <div className="bg-sky-50 border border-sky-100 rounded-2xl p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-600 font-medium">Mapped HOD:</span>
-                  <span className={`font-extrabold px-2 py-0.5 rounded-lg border ${
-                    getHODPreview(formData.department) === "HOD Not Configured"
+                  <span className="text-slate-600 font-medium">
+                    {selectedDepts.length > 1 ? "Mapped HODs:" : "Mapped HOD:"}
+                  </span>
+                  <span className={`font-extrabold px-2.5 py-1 rounded-lg border text-right ${
+                    getHODPreview(formData.department).includes("HOD Not Configured")
                       ? "bg-amber-50 text-amber-800 border-amber-300"
                       : "bg-white text-sky-900 border-sky-200"
                   }`}>

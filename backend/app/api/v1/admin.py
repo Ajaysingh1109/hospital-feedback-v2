@@ -84,14 +84,17 @@ def get_analytics(
     this_week_count = base_query.filter(Feedback.date_str >= week_ago).count()
     this_month_count = base_query.filter(Feedback.date_str >= month_ago).count()
 
-    # Department counts
+    # Department counts (supports single and multi-department records)
     dept_rows = (
-        db.query(Feedback.department, func.count(Feedback.id))
+        db.query(Feedback.department)
         .filter(Feedback.is_deleted == False)
-        .group_by(Feedback.department)
         .all()
     )
-    dept_counts = {r[0]: r[1] for r in dept_rows}
+    dept_counts: dict = {}
+    for (d,) in dept_rows:
+        if d:
+            for sub_d in [x.strip() for x in d.split(",") if x.strip()]:
+                dept_counts[sub_d] = dept_counts.get(sub_d, 0) + 1
 
     # HOD counts
     hod_rows = (
@@ -226,7 +229,7 @@ def list_feedback(
     if end_date:
         query = query.filter(Feedback.date_str <= end_date)
     if department:
-        query = query.filter(Feedback.department.ilike(department))
+        query = query.filter(Feedback.department.ilike(f"%{department}%"))
     if hod:
         query = query.filter(Feedback.hod_name.ilike(hod))
     if staff:
@@ -491,7 +494,7 @@ def export_excel(
     if end_date:
         query = query.filter(Feedback.date_str <= end_date)
     if department:
-        query = query.filter(Feedback.department.ilike(department))
+        query = query.filter(Feedback.department.ilike(f"%{department}%"))
     if hod:
         query = query.filter(Feedback.hod_name.ilike(hod))
     if staff:
