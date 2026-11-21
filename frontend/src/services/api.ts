@@ -34,6 +34,25 @@ export function setToken(token: string) {
 
 export function clearToken() {
   localStorage.removeItem("hospital_auth_token");
+  localStorage.removeItem("hospital_current_user");
+}
+
+export function setCurrentUserLocal(user: any | null) {
+  if (user) {
+    localStorage.setItem("hospital_current_user", JSON.stringify(user));
+  } else {
+    localStorage.removeItem("hospital_current_user");
+  }
+}
+
+export function getCurrentUserLocal(): any | null {
+  const data = localStorage.getItem("hospital_current_user");
+  if (!data) return null;
+  try {
+    return JSON.parse(data);
+  } catch (_) {
+    return null;
+  }
 }
 
 async function request<T>(

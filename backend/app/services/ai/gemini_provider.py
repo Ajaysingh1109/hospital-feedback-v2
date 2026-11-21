@@ -207,7 +207,8 @@ class GeminiAIProvider(STTProvider, TranslationProvider, LLMProvider):
                 "4. ALREADY IN ENGLISH: If the spoken conversation is already in English (e.g. 'Patient is complaining about the billing staff.'), retain the exact sentence with minimal grammatical cleanup without changing any facts.\n"
                 "5. PRESERVE SEVERITY & TONE: Keep the complaint objective and faithful. Do not amplify minor concerns or downplay serious issues.\n"
                 "6. NO INVENTED NAMES OR DIAGNOSES: Do not invent patient names, consultant names, bed numbers, medical conditions, or drug names.\n"
-                "7. OUTPUT: Return ONLY the clean English complaint translation without any intro, outro, preamble, or quotation marks.\n\n"
+                "7. PATIENT-FOCUSED TRANSLATION: Translate ONLY what the patient or attendant stated as their feedback or complaint. EXCLUDE staff/interviewer questions or introductory remarks (such as 'feedback lene aaye hain', 'koi dikkat hai').\n"
+                "8. OUTPUT: Return ONLY the clean English patient statement without any intro, outro, preamble, or quotation marks.\n\n"
                 f"Conversation:\n{transcript}\n\n"
                 "Professional English Translation:"
             )
@@ -246,7 +247,7 @@ class GeminiAIProvider(STTProvider, TranslationProvider, LLMProvider):
                 "3. COMPLAINT STATEMENT (complaint): Dedicated, professional English complaint statement faithful to the spoken audio.\n"
                 "4. NO MEDICAL DIAGNOSES: Do NOT diagnose illnesses or recommend clinical treatments.\n"
                 "5. SUGGESTED DEPARTMENT: Suggest ONE department based ONLY on the complaint: Clinical, Nursing, Pharmacy, Maintenance, F&B, Housekeeping, Operations, Billing, IT, Security, Other.\n"
-                "6. COMPLAINT TYPE: Clinical | Nursing Care | Pharmacy | Food Complaint | Housekeeping | Infrastructure | Billing | Staff Behaviour | Service Complaint | Maintenance | General Feedback | Appreciation\n"
+                "6. COMPLAINT TYPE: Classify the statement strictly as one of: Complaint, Suggestion, Request, or Appreciation (default: Complaint).\n"
                 "7. PRIORITY: Low | Medium | High | Critical | Not Specified (Assign based ONLY on explicit urgency words; default Medium for complaints, Low for appreciation).\n"
                 "8. FIELD PROVENANCE: Every field must be categorized as 'STAFF_ENTERED', 'EXPLICITLY_SPOKEN', or 'AI_DERIVED'.\n\n"
                 f"Original Transcript:\n{original_transcript}\n\n"
@@ -260,7 +261,7 @@ class GeminiAIProvider(STTProvider, TranslationProvider, LLMProvider):
                 '  "negative_feedback": "Explicit issue or Not Provided",\n'
                 '  "specific_complaint": "Concrete specific issue or Not Provided",\n'
                 '  "suggested_action": "Operational improvement recommendation or Not Provided",\n'
-                '  "complaint_type": "Clinical | Nursing Care | Pharmacy | Food Complaint | Housekeeping | Infrastructure | Billing | Staff Behaviour | Service Complaint | Maintenance | General Feedback | Appreciation",\n'
+                '  "complaint_type": "Complaint | Suggestion | Request | Appreciation",\n'
                 '  "suggested_department": "Clinical | Nursing | Pharmacy | Maintenance | F&B | Housekeeping | Operations | Billing | IT | Security | Other",\n'
                 '  "suggested_subcategory": "Short category description",\n'
                 '  "priority": "Low | Medium | High | Critical | Not Specified",\n'

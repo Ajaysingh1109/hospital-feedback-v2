@@ -202,7 +202,7 @@ class FeedbackCreate(BaseModel):
     # CLASSIFICATION & STRUCTURED FEEDBACK
     subcategory: Optional[str] = None
     complaint: Optional[str] = "Not Provided"
-    complaint_type: Optional[str] = "General Feedback"
+    complaint_type: Optional[str] = "Complaint"
     complaint_summary: Optional[str] = "Not Provided"
     detailed_feedback: Optional[str] = "Not Provided"
     positive_feedback: Optional[str] = "Not Provided"
@@ -362,6 +362,8 @@ class FeedbackCorrectionRequest(BaseModel):
     location: Optional[str] = None
     consultant: Optional[str] = None
     scheme: Optional[str] = None
+    original_transcript: Optional[str] = None
+    english_translation: Optional[str] = None
 
 
 # ============================================================================

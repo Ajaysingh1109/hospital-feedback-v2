@@ -1,4 +1,5 @@
 import io
+import re
 from datetime import datetime
 from typing import List, Optional
 import openpyxl
@@ -6,6 +7,42 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from ..models import Feedback
+
+
+def clean_patient_verbatim_statement(raw_text: str) -> str:
+    """
+    Ensures Excel contains ONLY what the patient stated verbatim without high-level summary.
+    Strips out any interviewer/staff questions or dialogue prefixes.
+    """
+    if not raw_text or not raw_text.strip():
+        return "Not Provided"
+
+    text = raw_text.strip()
+
+    # 1. If explicit dialogue tags like 'Patient:' or 'Attendant:' exist, extract patient parts
+    patient_segments = re.findall(
+        r'(?:patient|attendant|marij|mariz)\s*[:\-]\s*(.*?)(?=(?:staff|doctor|nurse|interviewer|feedbacker|\bpatient\b|\battendant\b\s*[:\-]|$))',
+        text,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+    if patient_segments:
+        extracted = " ".join(s.strip() for s in patient_segments if s.strip())
+        if extracted:
+            text = extracted
+
+    # 2. Strip leading staff/interviewer dialogue or questions
+    staff_patterns = [
+        r'^(?:staff|interviewer|doctor|nurse|feedbacker)\s*[:\-].*?(?=(?:patient|attendant)\s*[:\-]|\n|$)',
+        r'^(?:namaste|hello|hi)[,\s]+(?:feedback|patient).*?[.?!]\s*',
+        r'^(?:aapko\s+)?koi\s+(?:pareshani|problem|dikkat|issue|shikayat)\s+(?:hai|to\s+nahi|hui).*?[.?!\n]\s*',
+        r'^(?:did\s+you\s+face|how\s+was|how\s+is)\s+(?:any\s+problem|your\s+stay|the\s+service|the\s+food).*?[.?!\n]\s*',
+    ]
+    for pattern in staff_patterns:
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE | re.DOTALL).strip()
+
+    # 3. Clean up leading/trailing leftover tags
+    text = re.sub(r'^(?:patient|attendant)\s*[:\-]\s*', '', text, flags=re.IGNORECASE).strip()
+    return text or raw_text.strip() or "Not Provided"
 
 
 EXCEL_COLUMNS = [
@@ -73,13 +110,15 @@ def generate_feedback_excel(feedbacks: List[Feedback]) -> bytes:
 
         eng_trans = transcript_obj.english_translation if transcript_obj else ""
 
-        complaint_type = ai_obj.complaint_type if ai_obj else fb.department
-        complaint_text = (
+        complaint_type = (ai_obj.complaint_type if ai_obj and ai_obj.complaint_type else None) or "Complaint"
+        # Exact verbatim statement from patient: strictly no summary, staff questions filtered out
+        raw_complaint = (
             getattr(fb, "complaint", None)
-            or (ai_obj.complaint_summary if ai_obj and ai_obj.complaint_summary != "Not Provided" else None)
             or eng_trans
+            or (transcript_obj.original_transcript if transcript_obj else "")
             or "Not Provided"
         )
+        complaint_text = clean_patient_verbatim_statement(raw_complaint)
 
         # EXACTLY 11 COLUMNS IN REQUIRED ORDER:
         # Date | Time | UHID | Patient Name | Location | Consultant | Scheme | Department | HOD | Complaint Type | Complaint

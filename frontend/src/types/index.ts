@@ -233,5 +233,7 @@ export interface SessionDraft {
     specific_complaint: string;
     suggested_action: string;
     priority: string;
+    original_transcript?: string;
+    english_translation?: string;
   };
 }

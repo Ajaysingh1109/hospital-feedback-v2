@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # Security & JWT
     SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours shift
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 525600  # 365 days persistent login until explicit logout
 
     @field_validator("SECRET_KEY", mode="before")
     @classmethod

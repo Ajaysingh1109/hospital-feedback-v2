@@ -88,7 +88,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     department: "",
+    complaint_type: "Complaint",
     complaint_summary: "",
+    original_transcript: "",
+    english_translation: "",
     priority: "",
     location: "",
   });
@@ -202,7 +205,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     setSelectedFeedback(fb);
     setEditForm({
       department: fb.department,
-      complaint_summary: fb.complaint_summary,
+      complaint_type: fb.complaint_type || "Complaint",
+      complaint_summary: fb.complaint_summary || "",
+      original_transcript: fb.original_transcript || "",
+      english_translation: fb.english_translation || "",
       priority: fb.priority,
       location: fb.location || "",
     });
@@ -750,9 +756,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         <td className="py-3 px-4 font-mono font-semibold text-slate-900">{fb.uhid}</td>
                         <td className="py-3 px-4 font-bold text-slate-900">{fb.patient_name}</td>
                         <td className="py-3 px-3">
-                          <span className="bg-sky-50 text-sky-800 px-2 py-0.5 rounded-md font-semibold">
+                          <span className="bg-sky-50 text-sky-800 px-2 py-0.5 rounded-md font-semibold block mb-0.5">
                             {fb.department}
                           </span>
+                          {fb.complaint_type && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded inline-block ${
+                              fb.complaint_type === "Complaint"
+                                ? "bg-red-50 text-red-700 border border-red-200"
+                                : fb.complaint_type === "Suggestion"
+                                ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                : "bg-sky-50 text-sky-700 border border-sky-200"
+                            }`}>
+                              {fb.complaint_type}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-3 font-semibold text-teal-800">{fb.hod_name}</td>
                         <td className="py-3 px-3 text-slate-600">{fb.staff_name}</td>
@@ -1536,6 +1553,54 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             <option key={d.id} value={d.name}>{d.name}</option>
                           ))}
                       </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Feedback Type
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {["Complaint", "Suggestion", "Request"].map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => setEditForm({ ...editForm, complaint_type: t })}
+                            className={`py-1.5 px-2 text-xs font-bold rounded-lg border transition ${
+                              editForm.complaint_type === t
+                                ? "bg-sky-600 text-white border-sky-600 shadow-xs"
+                                : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Original Spoken Speech (Without Translate - Editable)
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={editForm.original_transcript}
+                        onChange={(e) => setEditForm({ ...editForm, original_transcript: e.target.value })}
+                        className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs font-mono"
+                        placeholder="Edit spoken conversation transcript..."
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        English Translation (With Translate - Editable)
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={editForm.english_translation}
+                        onChange={(e) => setEditForm({ ...editForm, english_translation: e.target.value })}
+                        className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs"
+                        placeholder="Edit translated complaint..."
+                      />
                     </div>
 
                     <div>

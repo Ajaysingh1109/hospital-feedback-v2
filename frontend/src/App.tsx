@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Header } from "./components/Header";
-import { getMe, logout } from "./services/api";
+import { getCurrentUserLocal, getMe, logout, setCurrentUserLocal } from "./services/api";
 import { initSyncEngine } from "./services/syncEngine";
 import { AuthResponse, User } from "./types";
 import { AdminView } from "./views/AdminView";
@@ -8,8 +8,8 @@ import { LoginView } from "./views/LoginView";
 import { StaffView } from "./views/StaffView";
 
 export const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [currentUser, setCurrentUser] = useState<User | null>(getCurrentUserLocal());
+  const [loading, setLoading] = useState<boolean>(!getCurrentUserLocal());
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [adminViewMode, setAdminViewMode] = useState<"admin" | "mobile_staff">("admin");
@@ -23,11 +23,14 @@ export const App: React.FC = () => {
     // 2. Start offline background sync engine
     initSyncEngine((count) => setPendingSyncCount(count));
 
-    // 3. Listen for forced logout events
-    const handleForcedLogout = () => setCurrentUser(null);
+    // 3. Listen for forced logout events (explicit manual logout or backend revocation)
+    const handleForcedLogout = () => {
+      setCurrentUser(null);
+      setCurrentUserLocal(null);
+    };
     window.addEventListener("auth:logout", handleForcedLogout);
 
-    // 4. Authenticate current user if token stored
+    // 4. Authenticate current user if token stored (preserves offline login on app reopen)
     checkAuth();
 
     return () => {
@@ -41,27 +44,37 @@ export const App: React.FC = () => {
     try {
       const user = await getMe();
       setCurrentUser(user);
-    } catch (_) {
-      setCurrentUser(null);
+      setCurrentUserLocal(user);
+    } catch (err: any) {
+      // ONLY log out if the backend explicitly reports unauthorized (401)
+      const msg = err?.message || "";
+      if (msg.includes("Session expired") || msg.includes("401") || msg.includes("Unauthorized")) {
+        setCurrentUser(null);
+        setCurrentUserLocal(null);
+      }
+      // If network failure / Render cold start / offline, user stays logged in from localStorage!
     } finally {
       setLoading(false);
     }
   };
 
   const handleLoginSuccess = (auth: AuthResponse) => {
-    setCurrentUser({
+    const user: User = {
       id: auth.user_id,
       username: auth.username,
       display_name: auth.display_name,
       role: auth.role,
       is_active: true,
       created_at: new Date().toISOString(),
-    });
+    };
+    setCurrentUser(user);
+    setCurrentUserLocal(user);
   };
 
   const handleLogout = async () => {
     await logout();
     setCurrentUser(null);
+    setCurrentUserLocal(null);
   };
 
   if (loading) {

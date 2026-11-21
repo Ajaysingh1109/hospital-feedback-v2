@@ -326,6 +326,35 @@ def correct_feedback(
         elif field == "complaint":
             orig_val = getattr(fb, "complaint", None)
             fb.complaint = new_val.strip()
+        elif field == "original_transcript":
+            if fb.transcript:
+                orig_val = fb.transcript.original_transcript
+                fb.transcript.original_transcript = new_val.strip()
+            else:
+                fb.transcript = FeedbackTranscript(
+                    feedback_id=fb.id,
+                    original_transcript=new_val.strip(),
+                    english_translation=new_val.strip(),
+                )
+        elif field == "english_translation":
+            if fb.transcript:
+                orig_val = fb.transcript.english_translation
+                fb.transcript.english_translation = new_val.strip()
+            else:
+                fb.transcript = FeedbackTranscript(
+                    feedback_id=fb.id,
+                    original_transcript="",
+                    english_translation=new_val.strip(),
+                )
+        elif field == "complaint_type":
+            if fb.ai_analysis:
+                orig_val = fb.ai_analysis.complaint_type
+                fb.ai_analysis.complaint_type = new_val.strip()
+            else:
+                fb.ai_analysis = FeedbackAIAnalysis(
+                    feedback_id=fb.id,
+                    complaint_type=new_val.strip(),
+                )
         elif fb.ai_analysis:
             # AI fields
             if hasattr(fb.ai_analysis, field):

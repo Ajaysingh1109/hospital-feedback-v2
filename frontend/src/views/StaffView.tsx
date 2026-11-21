@@ -140,7 +140,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
     attendant_name: "",
     subcategory: "",
     complaint: "",
-    complaint_type: "General Feedback",
+    complaint_type: "Complaint",
     complaint_summary: "",
     detailed_feedback: "",
     positive_feedback: "",
@@ -148,6 +148,8 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
     specific_complaint: "",
     suggested_action: "",
     priority: "Not Specified",
+    original_transcript: "",
+    english_translation: "",
   });
 
   const [aiResult, setAiResult] = useState<ProcessAudioResult | null>(null);
@@ -242,7 +244,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       attendant_name: "",
       subcategory: "",
       complaint: "",
-      complaint_type: "General Feedback",
+      complaint_type: "Complaint",
       complaint_summary: "",
       detailed_feedback: "",
       positive_feedback: "",
@@ -250,6 +252,8 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       specific_complaint: "",
       suggested_action: "",
       priority: "Not Specified",
+      original_transcript: "",
+      english_translation: "",
     });
 
     // Step 1: Mandatory Consent Dialog (Section 10 & 19)
@@ -456,11 +460,13 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
     const initialComplaint = result.complaint || result.english_translation || result.complaint_summary || "";
     setFormData((prev) => ({
       ...prev,
+      original_transcript: result.original_transcript || prev.original_transcript,
+      english_translation: result.english_translation || prev.english_translation,
       department: prev.department ? prev.department : (result.suggested_department || ""),
       subcategory: prev.subcategory ? prev.subcategory : (result.suggested_subcategory || ""),
       location: prev.location ? prev.location : (result.suggested_location || ""),
       complaint: initialComplaint || prev.complaint,
-      complaint_type: result.complaint_type || prev.complaint_type,
+      complaint_type: result.complaint_type || prev.complaint_type || "Complaint",
       complaint_summary: result.complaint_summary || prev.complaint_summary,
       detailed_feedback: result.detailed_feedback || prev.detailed_feedback,
       positive_feedback: result.positive_feedback || prev.positive_feedback,
@@ -585,7 +591,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       attendant_name: "",
       subcategory: "",
       complaint: "",
-      complaint_type: "General Feedback",
+      complaint_type: "Complaint",
       complaint_summary: "",
       detailed_feedback: "",
       positive_feedback: "",
@@ -593,6 +599,8 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       specific_complaint: "",
       suggested_action: "",
       priority: "Not Specified",
+      original_transcript: "",
+      english_translation: "",
     });
     setStep("details");
     setStatusBadge("IDLE");
@@ -729,8 +737,8 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       suggested_action: formData.suggested_action,
       priority: formData.priority,
       original_language: aiResult?.original_language || "Hindi/English",
-      original_transcript: aiResult?.original_transcript || "",
-      english_translation: aiResult?.english_translation || "",
+      original_transcript: formData.original_transcript || aiResult?.original_transcript || "",
+      english_translation: formData.english_translation || formData.complaint || aiResult?.english_translation || "",
       duration_seconds: recordingDuration,
       audio_file_id: aiResult?.audio_file_id,
       ai_suggested_department: aiResult?.suggested_department,
@@ -862,7 +870,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
           if (recoveredDraft) {
             setSessionId(recoveredDraft.session_id);
             setStep(recoveredDraft.step);
-            setFormData(recoveredDraft.form_data);
+            setFormData({
+              ...recoveredDraft.form_data,
+              original_transcript: recoveredDraft.form_data.original_transcript || "",
+              english_translation: recoveredDraft.form_data.english_translation || "",
+            });
             setRecordingDuration(recoveredDraft.duration_seconds || 0);
             setRecoveredDraft(null);
             setActiveTab("flow");
@@ -1673,6 +1685,36 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                 )}
               </div>
 
+              {/* FEEDBACK CATEGORY / TYPE: Complaint | Suggestion | Request */}
+              <div className="pt-2">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Feedback Type <span className="text-red-500">*</span>
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { type: "Complaint", label: "⚠️ Complaint", activeClass: "bg-red-600 text-white border-red-600 shadow-sm" },
+                    { type: "Suggestion", label: "💡 Suggestion", activeClass: "bg-amber-600 text-white border-amber-600 shadow-sm" },
+                    { type: "Request", label: "📋 Request", activeClass: "bg-sky-600 text-white border-sky-600 shadow-sm" },
+                  ].map((item) => {
+                    const isSelected = formData.complaint_type === item.type;
+                    return (
+                      <button
+                        key={item.type}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, complaint_type: item.type })}
+                        className={`py-2 px-2 text-xs font-bold rounded-xl border transition text-center ${
+                          isSelected
+                            ? item.activeClass
+                            : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Optional Manual Complaint / Notes Text */}
               <div className="pt-2">
                 <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -1769,24 +1811,28 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                 </div>
               </div>
 
-              {/* BLOCK 2: ORIGINAL SPEECH / TRANSCRIPT */}
+              {/* BLOCK 2: ORIGINAL SPEECH / TRANSCRIPT (WITHOUT TRANSLATE - EDITABLE) */}
               <div className="bg-amber-50/40 border border-amber-200 rounded-2xl p-4 text-xs space-y-2">
                 <div className="flex items-center justify-between border-b border-amber-200 pb-2">
                   <span className="font-extrabold text-amber-950 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
                     <Mic className="w-4 h-4 text-amber-600" />
-                    2. Original Speech / Transcript
+                    2. Original Speech / Transcript (Without Translate)
                   </span>
-                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
-                    [Original Speech (Verbatim)]
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300 flex items-center gap-1">
+                    <Edit3 className="w-3 h-3 text-amber-700" /> Editable
                   </span>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 block mb-1">
-                    Verbatim spoken conversation preserved without translation or editing:
+                    Verbatim spoken conversation preserved (Staff may edit Hindi/Hinglish speech):
                   </span>
-                  <div className="bg-white p-3 rounded-xl border border-amber-200 text-slate-800 text-xs font-mono leading-relaxed max-h-24 overflow-y-auto whitespace-pre-wrap">
-                    {aiResult?.original_transcript || (audioBlob ? "[Voice recording stored locally in encrypted offline queue. Speech will transcribe verbatim on cloud sync.]" : "Direct submission without recording")}
-                  </div>
+                  <textarea
+                    rows={3}
+                    value={formData.original_transcript || (aiResult?.original_transcript || "")}
+                    onChange={(e) => setFormData({ ...formData, original_transcript: e.target.value })}
+                    placeholder="Verbatim spoken conversation in Hindi, Hinglish, or English..."
+                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-slate-800 text-xs font-mono leading-relaxed focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                  />
                 </div>
               </div>
 
@@ -1827,11 +1873,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   </div>
                 )}
 
-                {/* Professional English Complaint */}
+                {/* Professional English Complaint / Translation */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="text-[10px] font-bold text-sky-900 uppercase flex items-center gap-1">
-                      Professional English Complaint <span className="text-slate-400 font-normal">(Staff may edit before submission)</span>
+                      Professional English Complaint (With Translate - Editable)
                     </label>
                     <span className="text-[10px] text-sky-600 font-bold flex items-center gap-0.5">
                       <Edit3 className="w-3 h-3" /> Editable
@@ -1839,8 +1885,8 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   </div>
                   <textarea
                     rows={3}
-                    value={formData.complaint}
-                    onChange={(e) => setFormData({ ...formData, complaint: e.target.value })}
+                    value={formData.complaint || formData.english_translation || (aiResult?.english_translation || "")}
+                    onChange={(e) => setFormData({ ...formData, complaint: e.target.value, english_translation: e.target.value })}
                     placeholder="Enter or refine final English complaint statement..."
                     className="w-full p-3 bg-white border border-sky-300 rounded-xl text-slate-900 text-xs font-medium focus:ring-2 focus:ring-sky-500 focus:outline-none"
                   />
@@ -1865,35 +1911,34 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   />
                 </div>
 
-                {/* Complaint Type */}
+                {/* Feedback Type: Complaint | Suggestion | Request */}
                 <div>
-                  <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">
-                    Complaint Type:
+                  <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1.5">
+                    Feedback Type:
                   </label>
-                  <select
-                    value={formData.complaint_type}
-                    onChange={(e) => setFormData({ ...formData, complaint_type: e.target.value })}
-                    className="w-full px-3 py-2 bg-white border border-sky-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  >
+                  <div className="grid grid-cols-3 gap-2">
                     {[
-                      "Clinical",
-                      "Nursing Care",
-                      "Pharmacy",
-                      "Food Complaint",
-                      "Housekeeping",
-                      "Infrastructure",
-                      "Billing",
-                      "Staff Behaviour",
-                      "Service Complaint",
-                      "Maintenance",
-                      "General Feedback",
-                      "Appreciation",
-                    ].map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
+                      { type: "Complaint", label: "⚠️ Complaint", activeClass: "bg-red-600 text-white border-red-600 shadow-sm" },
+                      { type: "Suggestion", label: "💡 Suggestion", activeClass: "bg-amber-600 text-white border-amber-600 shadow-sm" },
+                      { type: "Request", label: "📋 Request", activeClass: "bg-sky-600 text-white border-sky-600 shadow-sm" },
+                    ].map((item) => {
+                      const isSelected = formData.complaint_type === item.type;
+                      return (
+                        <button
+                          key={item.type}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, complaint_type: item.type })}
+                          className={`py-2 px-2 text-xs font-bold rounded-xl border transition text-center ${
+                            isSelected
+                              ? item.activeClass
+                              : "bg-white hover:bg-slate-50 text-slate-700 border-slate-200"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
