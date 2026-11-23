@@ -51,6 +51,7 @@ from ...schemas import (
 from ...services.audit_service import log_audit
 from ...services.excel_service import generate_feedback_excel
 from ...services.hod_service import get_deterministic_hod
+from ...services.hospital_normalization import normalize_explicit_location
 from ...services.retention_service import (
     purge_bulk_feedbacks,
     purge_single_feedback,
@@ -316,7 +317,7 @@ def correct_feedback(
             fb.subcategory = new_val.strip()
         elif field == "location":
             orig_val = fb.location
-            fb.location = new_val.strip()
+            fb.location = normalize_explicit_location(new_val.strip())
         elif field == "consultant":
             orig_val = fb.consultant
             fb.consultant = new_val.strip()

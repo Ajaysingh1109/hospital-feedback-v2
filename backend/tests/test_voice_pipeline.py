@@ -369,19 +369,36 @@ def test_16_hospital_shorthand_normalization_gw1_gw2_gw3():
     from app.services.hospital_normalization import (
         extract_and_normalize_location,
         normalize_explicit_location,
+        expand_hospital_shorthands_in_english,
     )
+    from app.services.excel_service import clean_patient_verbatim_statement
 
     # 1. Contextual extraction
     assert extract_and_normalize_location("GW1 ke patient ko breakfast nahi mila") == "General Ward 1"
     assert extract_and_normalize_location("GW2 mein patient ko complaint hai") == "General Ward 2"
     assert extract_and_normalize_location("GW3 par safai nahi hui") == "General Ward 3"
     assert extract_and_normalize_location("Location: GW1") == "General Ward 1"
+    assert extract_and_normalize_location("pvt room mein safai nahi hui") == "Private Room"
+    assert extract_and_normalize_location("pvt 102 mein AC kharab hai") == "Private Room 102"
     assert extract_and_normalize_location("General hospital services were okay") is None
 
     # 2. Explicit normalization
     assert normalize_explicit_location("GW1") == "General Ward 1"
     assert normalize_explicit_location("gw2") == "General Ward 2"
+    assert normalize_explicit_location("pvt") == "Private Room"
+    assert normalize_explicit_location("pvt room") == "Private Room"
+    assert normalize_explicit_location("pvt 101") == "Private Room 101"
+    assert normalize_explicit_location("pvt. 204") == "Private Room 204"
     assert normalize_explicit_location("ICU Bed 3") == "ICU Bed 3"
+
+    # 3. Shorthand expansion in English
+    assert expand_hospital_shorthands_in_english("AC in pvt room is not working") == "AC in Private Room is not working"
+    assert expand_hospital_shorthands_in_english("Ward GW1 is clean") == "General Ward 1 is clean"
+
+    # 4. Verbatim statement formatting with attribution prefix
+    verbatim_res = clean_patient_verbatim_statement("food was cold and doctor did not arrive")
+    assert verbatim_res.startswith("Patient / Attendant stated that")
+    assert "food was cold" in verbatim_res
 
 
 def test_17_explicit_location_normalization_on_submission(client: TestClient, staff_headers: dict):

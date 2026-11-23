@@ -70,6 +70,26 @@ interface StaffViewProps {
 // Visible Recording & Submission States (Section 2)
 type AppStateBadge = "IDLE" | "RECORDING" | "PAUSED" | "PROCESSING" | "SAVED OFFLINE" | "SYNCING" | "SYNCED" | "FAILED";
 
+export const normalizeLocationInput = (raw: string): string => {
+  if (!raw) return "";
+  const trimmed = raw.trim();
+  if (/^pvt\.?(\s*room)?$/i.test(trimmed)) {
+    return "Private Room";
+  }
+  const match = trimmed.match(/^pvt\.?\s*(\d+)$/i);
+  if (match) {
+    return `Private Room ${match[1]}`;
+  }
+  const match2 = trimmed.match(/^pvt\.?\s*room\s*(\d+)$/i);
+  if (match2) {
+    return `Private Room ${match2[1]}`;
+  }
+  if (/^gw1$/i.test(trimmed)) return "General Ward 1";
+  if (/^gw2$/i.test(trimmed)) return "General Ward 2";
+  if (/^gw3$/i.test(trimmed)) return "General Ward 3";
+  return raw;
+};
+
 export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
   const [activeTab, setActiveTab] = useState<"dashboard" | "flow" | "submissions" | "offline">("dashboard");
   const [step, setStep] = useState<"consent" | "record" | "processing" | "details" | "review" | "success">("consent");
@@ -558,7 +578,10 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
 
     // 2. Capture atomic snapshot before instant state reset
     const activeUuid = sessionId || `uuid-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const snapshotFormData = { ...formData };
+    const snapshotFormData = {
+      ...formData,
+      location: normalizeLocationInput(formData.location),
+    };
     const snapshotAudio = currentAudio;
 
     // Stop active recording if running
@@ -722,7 +745,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       uhid: String(formData.uhid).trim(), // STRICTLY TEXT! Preserves leading zeros!
       patient_name: formData.patient_name.trim(),
       department: formData.department.trim(),
-      location: formData.location || undefined,
+      location: normalizeLocationInput(formData.location) || undefined,
       consultant: formData.consultant || undefined,
       scheme: formData.scheme || undefined,
       attendant_name: formData.attendant_name || undefined,
@@ -1539,7 +1562,13 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                     type="text"
                     value={formData.location}
                     onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                    placeholder="Ward 3B, Bed 12"
+                    onBlur={(e) => {
+                      const norm = normalizeLocationInput(e.target.value);
+                      if (norm !== e.target.value) {
+                        setFormData((prev) => ({ ...prev, location: norm }));
+                      }
+                    }}
+                    placeholder="Ward 3B, Bed 12 (or 'pvt')"
                     className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs"
                   />
                 </div>

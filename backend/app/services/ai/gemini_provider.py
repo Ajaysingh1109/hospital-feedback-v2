@@ -44,10 +44,11 @@ HOSPITAL & CLINICAL DOMAIN VOCABULARY HINTS:
   housekeeping, safai, cleanliness, washroom, toilet, bathroom, linen, bedsheet, pillow,
   food, diet, meal, breakfast, lunch, dinner, khana, namak, salt, tea, water,
   air conditioning, AC, fan, cooling, light, tap, plumbing, lift, elevator, security guard,
-  GW1, GW2, GW3 (General Ward 1, 2, 3).
+  GW1, GW2, GW3 (General Ward 1, 2, 3), PVT, pvt room (Private Room).
 
 PHONETIC DISAMBIGUATION RULES:
 - 'peshent' or 'mariz' -> 'patient'
+- 'pvt' / 'pvt room' / 'pvt.' -> 'Private Room'
 - 'feedback' / 'feedbacker' / 'feed back' -> transcribe accurately as 'feedback' or 'feedback lene' as spoken; NEVER transcribe as 'feedbacker'.
 - 'attender' -> 'attendant'
 - 'this charge' in hospital context -> 'discharge'
@@ -203,12 +204,20 @@ class GeminiAIProvider(STTProvider, TranslationProvider, LLMProvider):
                 "   - 'subah se' -> 'since morning'\n"
                 "   - 'abhi tak nahi mila' / 'abhi tak nahi aaya' -> 'has still not been provided / has still not arrived'\n"
                 "   - 'bahut der ho gayi' -> 'has been delayed for a long time'\n"
-                "3. HOSPITAL SHORTHANDS: When ward abbreviations appear (e.g. GW1, GW2, GW3), translate them as 'General Ward 1', 'General Ward 2', 'General Ward 3'.\n"
-                "4. ALREADY IN ENGLISH: If the spoken conversation is already in English (e.g. 'Patient is complaining about the billing staff.'), retain the exact sentence with minimal grammatical cleanup without changing any facts.\n"
-                "5. PRESERVE SEVERITY & TONE: Keep the complaint objective and faithful. Do not amplify minor concerns or downplay serious issues.\n"
-                "6. NO INVENTED NAMES OR DIAGNOSES: Do not invent patient names, consultant names, bed numbers, medical conditions, or drug names.\n"
-                "7. PATIENT-FOCUSED TRANSLATION: Translate ONLY what the patient or attendant stated as their feedback or complaint. EXCLUDE staff/interviewer questions or introductory remarks (such as 'feedback lene aaye hain', 'koi dikkat hai').\n"
-                "8. OUTPUT: Return ONLY the clean English patient statement without any intro, outro, preamble, or quotation marks.\n\n"
+                "3. HOSPITAL SHORTHANDS & ABBREVIATIONS:\n"
+                "   - 'GW1', 'GW2', 'GW3' -> 'General Ward 1', 'General Ward 2', 'General Ward 3'\n"
+                "   - 'pvt', 'pvt room', 'pvt.' -> 'Private Room'\n"
+                "4. FULL VERBATIM PATIENT STATEMENT (STRICTLY NO SUMMARY):\n"
+                "   - Translate EVERYTHING the patient or attendant said completely and accurately as it is.\n"
+                "   - DO NOT summarize, condense, or omit any grievances, observations, or details.\n"
+                "5. STATEMENT ATTRIBUTION:\n"
+                "   - Begin the translated statement with: 'Patient / Attendant stated that ...' followed by the exact verbatim translation of what was said.\n"
+                "6. EXCLUDE INTERVIEWER QUESTIONS:\n"
+                "   - EXCLUDE staff/interviewer inquiry questions or greetings (such as 'namaste', 'feedback lene aaye hain', 'aapko koi pareshani to nahi hui'). Translate ONLY what the patient or attendant stated as their feedback.\n"
+                "7. ALREADY IN ENGLISH: If the spoken conversation is already in English, retain the full verbatim statement without changing any facts, prefixed by 'Patient / Attendant stated that ...'.\n"
+                "8. PRESERVE SEVERITY & TONE: Keep the complaint objective and faithful. Do not amplify minor concerns or downplay serious issues.\n"
+                "9. NO INVENTED NAMES OR DIAGNOSES: Do not invent patient names, consultant names, bed numbers, medical conditions, or drug names.\n"
+                "10. OUTPUT: Return ONLY the clean English patient statement without any intro, outro, preamble, or quotation marks.\n\n"
                 f"Conversation:\n{transcript}\n\n"
                 "Professional English Translation:"
             )
@@ -244,7 +253,7 @@ class GeminiAIProvider(STTProvider, TranslationProvider, LLMProvider):
                 "CRITICAL ANTI-HALLUCINATION & PROVENANCE RULES:\n"
                 "1. SENSITIVE FIELDS FORBIDDEN: UHID, Patient Name, Consultant, Department, Location, and Scheme must NEVER be invented. AI cannot know them unless explicitly uttered. If not explicitly spoken in the audio, return 'Not Provided'.\n"
                 "2. SHORT SUMMARY (complaint_summary): Must be exactly ONE concise, factual sentence summarizing ONLY the issues or compliments explicitly stated. Strictly forbid mentioning patient names, consultant names, durations, or medical diagnoses unless explicitly uttered. No emotional speculation (do NOT say 'deliberate negligence' or 'extremely dissatisfied').\n"
-                "3. COMPLAINT STATEMENT (complaint): Dedicated, professional English complaint statement faithful to the spoken audio.\n"
+                "3. COMPLAINT STATEMENT (complaint): Full verbatim English complaint statement as stated by the patient/attendant without omitting details (begin with 'Patient / Attendant stated that ...'). Strictly NO summarizing or condensing.\n"
                 "4. NO MEDICAL DIAGNOSES: Do NOT diagnose illnesses or recommend clinical treatments.\n"
                 "5. SUGGESTED DEPARTMENT: Suggest ONE department based ONLY on the complaint: Clinical, Nursing, Pharmacy, Maintenance, F&B, Housekeeping, Operations, Billing, IT, Security, Other.\n"
                 "6. COMPLAINT TYPE: Classify the statement strictly as one of: Complaint, Suggestion, Request, or Appreciation (default: Complaint).\n"

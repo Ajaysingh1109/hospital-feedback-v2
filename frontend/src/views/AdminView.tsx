@@ -49,6 +49,7 @@ import {
   updateUser,
   resetUserPassword,
 } from "../services/api";
+import { normalizeLocationInput } from "./StaffView";
 import {
   AnalyticsSummary,
   FeedbackRecord,
@@ -229,7 +230,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const handleSaveCorrection = async () => {
     if (!selectedFeedback) return;
     try {
-      const updated = await correctFeedback(selectedFeedback.feedback_id, editForm);
+      const payload = {
+        ...editForm,
+        location: normalizeLocationInput(editForm.location),
+      };
+      const updated = await correctFeedback(selectedFeedback.feedback_id, payload);
       setSelectedFeedback(updated);
       setIsEditing(false);
       loadFeedbackList(currentPage);
@@ -1600,6 +1605,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                         onChange={(e) => setEditForm({ ...editForm, english_translation: e.target.value })}
                         className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs"
                         placeholder="Edit translated complaint..."
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Location / Bed (e.g. 'pvt' &rarr; 'Private Room')
+                      </label>
+                      <input
+                        type="text"
+                        value={editForm.location}
+                        onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+                        onBlur={(e) => {
+                          const norm = normalizeLocationInput(e.target.value);
+                          if (norm !== e.target.value) {
+                            setEditForm((prev) => ({ ...prev, location: norm }));
+                          }
+                        }}
+                        placeholder="e.g. Private Room, GW1, Ward 3B"
+                        className="w-full p-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold"
                       />
                     </div>
 
