@@ -237,3 +237,18 @@ export interface SessionDraft {
     english_translation?: string;
   };
 }
+
+export interface AudioVaultItem {
+  id: string;
+  session_id: string;
+  created_at: string;
+  duration_seconds: number;
+  blob: Blob;
+  patient_name?: string;
+  uhid?: string;
+  department?: string;
+  status: "RECORDED" | "PROCESSING" | "PROCESSED" | "FAILED" | "OFFLINE";
+  original_transcript?: string;
+  english_translation?: string;
+  last_error?: string;
+}

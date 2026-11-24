@@ -312,6 +312,10 @@ def correct_feedback(
                 new_hod = get_deterministic_hod(new_val.strip(), db=db)
                 fb.hod_name = new_hod
 
+        elif field == "hod_name":
+            orig_val = fb.hod_name
+            fb.hod_name = new_val.strip()
+
         elif field == "subcategory":
             orig_val = fb.subcategory
             fb.subcategory = new_val.strip()
@@ -727,6 +731,15 @@ def update_hod_mapping(
     mapping.hod_name = body.hod_name.strip()
     if body.is_active is not None:
         mapping.is_active = body.is_active
+
+    # Also update existing active feedbacks under this department to reflect the new HOD name
+    if mapping.department_name and mapping.hod_name:
+        existing_fbs = db.query(Feedback).filter(
+            func.lower(Feedback.department) == mapping.department_name.lower(),
+            Feedback.is_deleted == False,
+        ).all()
+        for f in existing_fbs:
+            f.hod_name = mapping.hod_name
 
     db.commit()
     db.refresh(mapping)

@@ -29,6 +29,10 @@ import {
   Loader2,
   Layers,
   Check,
+  HardDrive,
+  Trash2,
+  Download,
+  Volume2,
 } from "lucide-react";
 import {
   fetchMasterData,
@@ -45,8 +49,14 @@ import {
   getLatestDraftSession,
   getOfflineQueueItems,
   saveDraftSession,
+  saveToAudioVault,
+  updateAudioVaultStatus,
+  getAudioVaultItems,
+  deleteFromAudioVault,
+  purgeExpiredAudioVault,
 } from "../services/db";
 import {
+  AudioVaultItem,
   FeedbackRecord,
   MasterData,
   OfflineFeedbackItem,
@@ -90,8 +100,30 @@ export const normalizeLocationInput = (raw: string): string => {
   return raw;
 };
 
+const AudioVaultPlayer: React.FC<{ blob: Blob }> = ({ blob }) => {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const objUrl = URL.createObjectURL(blob);
+    setUrl(objUrl);
+    return () => {
+      URL.revokeObjectURL(objUrl);
+    };
+  }, [blob]);
+
+  if (!url) return null;
+  return (
+    <audio
+      controls
+      controlsList="nodownload"
+      src={url}
+      className="w-full h-8 mt-1 rounded-lg"
+    />
+  );
+};
+
 export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
-  const [activeTab, setActiveTab] = useState<"dashboard" | "flow" | "submissions" | "offline">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "flow" | "submissions" | "vault" | "offline">("dashboard");
   const [step, setStep] = useState<"consent" | "record" | "processing" | "details" | "review" | "success">("consent");
   const [statusBadge, setStatusBadge] = useState<AppStateBadge>("IDLE");
 
@@ -107,6 +139,9 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
   const [todaySubmissions, setTodaySubmissions] = useState<FeedbackRecord[]>([]);
   const [offlineItems, setOfflineItems] = useState<OfflineFeedbackItem[]>([]);
   const [recoveredDraft, setRecoveredDraft] = useState<SessionDraft | null>(null);
+
+  // 12-Hour Audio Vault State
+  const [audioVaultItems, setAudioVaultItems] = useState<AudioVaultItem[]>([]);
 
   // Background Processing Queue & Notification State (Section 2, 7)
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -225,6 +260,68 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
     }
   }, [isOnline]);
 
+  const loadAudioVault = async () => {
+    try {
+      await purgeExpiredAudioVault();
+      const items = await getAudioVaultItems();
+      setAudioVaultItems(items);
+    } catch (e) {
+      console.warn("Failed to load audio vault:", e);
+    }
+  };
+
+  const handleDownloadVaultAudio = (item: AudioVaultItem) => {
+    const url = URL.createObjectURL(item.blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Audio_Vault_${item.patient_name || "recording"}_${item.session_id.substring(0, 8)}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const handleRetryVaultItem = async (item: AudioVaultItem) => {
+    setSessionId(item.session_id);
+    if (item.patient_name) {
+      setFormData((prev) => ({
+        ...prev,
+        patient_name: item.patient_name || prev.patient_name,
+        uhid: item.uhid || prev.uhid,
+        department: item.department || prev.department,
+      }));
+    }
+    audioBlobRef.current = item.blob;
+    setAudioBlob(item.blob);
+    setActiveTab("flow");
+    await proceedWithCapturedBlob(item.blob);
+  };
+
+  const handleDeleteVaultItem = async (id: string) => {
+    if (window.confirm("Are you sure you want to delete this recorded audio from the vault?")) {
+      await deleteFromAudioVault(id);
+      await loadAudioVault();
+    }
+  };
+
+  const handleUseVaultItemManual = (item: AudioVaultItem) => {
+    setSessionId(item.session_id);
+    audioBlobRef.current = item.blob;
+    setAudioBlob(item.blob);
+    if (item.patient_name) {
+      setFormData((prev) => ({
+        ...prev,
+        patient_name: item.patient_name || prev.patient_name,
+        uhid: item.uhid || prev.uhid,
+        department: item.department || prev.department,
+        original_transcript: item.original_transcript || prev.original_transcript,
+        english_translation: item.english_translation || prev.english_translation,
+      }));
+    }
+    setActiveTab("flow");
+    setStep("review");
+  };
+
   const loadInitialData = async () => {
     try {
       const md = await fetchMasterData();
@@ -236,6 +333,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       }
       const queue = await getOfflineQueueItems();
       setOfflineItems(queue);
+      await loadAudioVault();
     } catch (e) {
       console.warn("Failed to load initial staff data:", e);
     }
@@ -347,6 +445,22 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
         console.log(`VOICE_DEBUG: recorder_onstop mime_type=${fullBlob.type} size_bytes=${fullBlob.size}`);
         stream.getTracks().forEach((track) => track.stop());
         setStatusBadge("IDLE");
+
+        // Instant safe storage in Audio Vault (12-hour offline safety)
+        if (fullBlob.size > 0) {
+          saveToAudioVault({
+            id: sessionId,
+            session_id: sessionId,
+            created_at: new Date().toISOString(),
+            duration_seconds: recordingDuration,
+            blob: fullBlob,
+            patient_name: formData.patient_name || undefined,
+            uhid: formData.uhid || undefined,
+            department: formData.department || undefined,
+            status: isOnline ? "RECORDED" : "OFFLINE",
+          }).then(() => loadAudioVault()).catch(() => {});
+        }
+
         if (step === "record") {
           setStep("details");
         }
@@ -427,10 +541,6 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
   // ============================================================================
 
   const proceedWithCapturedBlob = async (blob: Blob) => {
-    setStep("processing");
-    setStatusBadge("PROCESSING");
-    setProcessingError(null);
-
     // Audio Quality Check
     if (blob.size < 1500) {
       setLowAudioMessage(`Audio is silent or too short (${blob.size} bytes). Please record again speaking clearly into the microphone.`);
@@ -438,41 +548,68 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
       return;
     }
 
-    setProcessingStatus(`Uploading audio recording (${Math.round(blob.size / 1024)} KB)...`);
+    // 1. Instantly save to local Audio Vault before any network attempt
+    await saveToAudioVault({
+      id: sessionId,
+      session_id: sessionId,
+      created_at: new Date().toISOString(),
+      duration_seconds: recordingDuration,
+      blob,
+      patient_name: formData.patient_name || undefined,
+      uhid: formData.uhid || undefined,
+      department: formData.department || undefined,
+      status: isOnline ? "RECORDED" : "OFFLINE",
+    }).catch(() => {});
+    loadAudioVault();
+
+    // 2. If completely offline, do NOT hang or trap staff on loading spinner!
+    if (!isOnline) {
+      setAiResult(null);
+      setToastMessage("📶 Offline: Audio safely saved in Audio Vault. Proceeding to review for offline saving.");
+      setTimeout(() => setToastMessage(null), 5000);
+      setStep("review");
+      setStatusBadge("IDLE");
+      return;
+    }
+
+    setStep("processing");
+    setStatusBadge("PROCESSING");
+    setProcessingError(null);
+    setProcessingStatus(`Connecting & uploading audio (${Math.round(blob.size / 1024)} KB)...`);
     console.log(`VOICE_DEBUG: upload_started=true size_bytes=${blob.size}`);
 
     try {
-      if (isOnline) {
-        setProcessingStatus("Transcribing conversation (Hindi / Hinglish / English)...");
-        const result = await processAudio(blob, sessionId);
-        setAiResult(result);
-        applyAIResultToForm(result);
-      } else {
-        // Safe offline handling
-        setAiResult(null);
-        setFormData((prev) => ({
-          ...prev,
-          complaint: prev.complaint || "",
-          complaint_summary: "",
-          detailed_feedback: "",
-          positive_feedback: "Not Provided",
-          negative_feedback: "Not Provided",
-        }));
-      }
+      setProcessingStatus("Transcribing conversation (Hindi / Hinglish / English)...");
+      const result = await processAudio(blob, sessionId);
+      setAiResult(result);
+      applyAIResultToForm(result);
 
-      setStep("details");
+      updateAudioVaultStatus(sessionId, "PROCESSED", {
+        original_transcript: result.original_transcript,
+        english_translation: result.english_translation,
+      }).catch(() => {});
+
+      setStep("review");
       setStatusBadge("IDLE");
 
       saveDraftSession({
         session_id: sessionId,
         started_at: new Date().toISOString(),
-        step: "details",
+        step: "review",
         duration_seconds: recordingDuration,
         form_data: formData,
       });
     } catch (err: any) {
       console.error("AI pipeline error:", err);
-      setProcessingError(err?.message || "AI processing encountered an issue.");
+      updateAudioVaultStatus(sessionId, "FAILED", {
+        last_error: err?.message || "Network / processing failure",
+      }).catch(() => {});
+      const isNet = err?.message?.includes("timed out") || err?.message?.includes("internet") || err?.message?.includes("connect");
+      setProcessingError(
+        isNet
+          ? "⚠️ Network timed out or internet is disconnected. Audio is safely stored in your Audio Vault! You can continue to review and submit offline, or retry AI processing."
+          : (err?.message || "AI processing encountered an issue. Audio is safely stored in your Audio Vault.")
+      );
     }
   };
 
@@ -976,6 +1113,19 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
               Offline: {offlineItems.length}
             </span>
           )}
+          {audioVaultItems.length > 0 && (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                loadAudioVault();
+                setActiveTab("vault");
+              }}
+              className="px-2 py-0.5 rounded-md bg-indigo-900/70 text-indigo-200 border border-indigo-700 font-bold hover:bg-indigo-800 transition flex items-center gap-1"
+            >
+              <HardDrive className="w-3 h-3 text-indigo-300" />
+              Vault: {audioVaultItems.length}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1110,20 +1260,35 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
           </div>
 
           {/* Action Navigation Buttons */}
-          <div className="grid grid-cols-2 gap-2.5 pt-1">
+          <div className="grid grid-cols-3 gap-2 pt-1">
             <button
               onClick={() => setActiveTab("submissions")}
-              className="py-3 px-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition flex items-center justify-center gap-2 text-xs"
+              className="py-3 px-2 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition flex flex-col items-center justify-center gap-1 text-[11px]"
             >
               <History className="w-4 h-4 text-sky-600" />
-              MY SUBMISSIONS
+              <span>SUBMISSIONS</span>
+            </button>
+            <button
+              onClick={() => {
+                loadAudioVault();
+                setActiveTab("vault");
+              }}
+              className="py-3 px-2 bg-white border border-indigo-200 rounded-2xl font-bold text-indigo-900 hover:bg-indigo-50/50 shadow-xs transition flex flex-col items-center justify-center gap-1 text-[11px] relative"
+            >
+              <HardDrive className="w-4 h-4 text-indigo-600" />
+              <span>AUDIO VAULT</span>
+              {audioVaultItems.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-indigo-600 text-white text-[9px] font-black w-5 h-5 rounded-full flex items-center justify-center shadow-xs">
+                  {audioVaultItems.length}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setActiveTab("offline")}
-              className="py-3 px-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition flex items-center justify-center gap-2 text-xs"
+              className="py-3 px-2 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 hover:bg-slate-50 shadow-xs transition flex flex-col items-center justify-center gap-1 text-[11px] relative"
             >
               <CloudUpload className="w-4 h-4 text-teal-600" />
-              DRAFTS / OFFLINE ({offlineItems.length})
+              <span>OFFLINE ({offlineItems.length})</span>
             </button>
           </div>
         </div>
@@ -1329,10 +1494,20 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                       Retry AI Analysis
                     </button>
                     <button
-                      onClick={() => setStep("details")}
-                      className="py-2 px-4 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl hover:bg-slate-200 transition"
+                      onClick={() => setStep("review")}
+                      className="py-2 px-4 bg-emerald-600 text-white text-xs font-bold rounded-xl shadow-xs hover:bg-emerald-700 transition"
                     >
-                      Continue with Manual Entry
+                      ✓ Continue to Review & Submit Offline
+                    </button>
+                    <button
+                      onClick={() => {
+                        loadAudioVault();
+                        setActiveTab("vault");
+                      }}
+                      className="py-2 px-4 bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-semibold rounded-xl hover:bg-indigo-100 transition flex items-center gap-1"
+                    >
+                      <HardDrive className="w-3.5 h-3.5" />
+                      View in Audio Vault
                     </button>
                   </div>
                 </div>
@@ -2180,6 +2355,175 @@ export const StaffView: React.FC<StaffViewProps> = ({ user, isOnline }) => {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* 5. AUDIO VAULT TAB (12-HOUR AUTO PURGE & OFFLINE SAFETY) */}
+      {/* ==================================================================== */}
+      {activeTab === "vault" && (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <HardDrive className="w-5 h-5 text-indigo-600" />
+                Audio Recording Vault ({audioVaultItems.length})
+              </h3>
+              <p className="text-[11px] text-slate-500 font-medium">
+                12-Hour Auto Purge • Local Device Storage • Offline Safe
+              </p>
+            </div>
+            <button
+              onClick={() => setActiveTab("dashboard")}
+              className="text-xs text-sky-600 font-bold hover:underline"
+            >
+              Back to Home
+            </button>
+          </div>
+
+          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 text-xs text-indigo-950 flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Offline Protected Audio Vault:</span>
+              <p className="text-[11px] text-indigo-800 mt-0.5 leading-relaxed">
+                If the internet disconnects during recording or AI analysis, your audio is safe here. Recordings are automatically deleted after 12 hours to conserve device storage.
+              </p>
+            </div>
+          </div>
+
+          {audioVaultItems.length === 0 ? (
+            <div className="bg-white rounded-3xl p-8 border border-slate-200 text-center text-slate-400 text-sm">
+              <HardDrive className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+              <p className="font-semibold text-slate-600">No audios currently stored in vault.</p>
+              <p className="text-xs text-slate-400 mt-1">
+                Every voice recording is automatically backed up here for 12 hours.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {audioVaultItems.map((item) => {
+                const ageMs = Date.now() - new Date(item.created_at).getTime();
+                const total12h = 12 * 60 * 60 * 1000;
+                const msLeft = Math.max(0, total12h - ageMs);
+                const hoursLeft = Math.floor(msLeft / (60 * 60 * 1000));
+                const minsLeft = Math.floor((msLeft % (60 * 60 * 1000)) / (60 * 1000));
+
+                return (
+                  <div
+                    key={item.id}
+                    className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs hover:border-indigo-300 transition"
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md">
+                          {item.session_id.substring(0, 14)}...
+                        </span>
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                          item.status === "PROCESSED"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : item.status === "FAILED"
+                            ? "bg-red-100 text-red-800"
+                            : item.status === "OFFLINE"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-sky-100 text-sky-800"
+                        }`}>
+                          {item.status}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        Expires in {hoursLeft}h {minsLeft}m
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between mt-2">
+                      <h4 className="font-bold text-slate-900 text-sm">
+                        {item.patient_name || "Voice Recording"}
+                        {item.uhid && (
+                          <span className="font-mono text-xs text-slate-500 font-normal ml-1">
+                            ({item.uhid})
+                          </span>
+                        )}
+                      </h4>
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {item.duration_seconds || 0}s ({Math.round(item.blob.size / 1024)} KB)
+                      </span>
+                    </div>
+
+                    {item.department && (
+                      <div className="text-xs text-slate-600 mt-0.5">
+                        <span className="font-medium text-sky-800">Dept: {item.department}</span>
+                      </div>
+                    )}
+
+                    {/* Audio Player */}
+                    <div className="mt-2.5">
+                      <AudioVaultPlayer blob={item.blob} />
+                    </div>
+
+                    {/* Transcript preview if processed */}
+                    {item.original_transcript && (
+                      <div className="mt-2 p-2 bg-slate-50 border border-slate-100 rounded-xl text-xs text-slate-600">
+                        <span className="font-bold text-slate-700 block text-[10px] uppercase tracking-wide">Transcript:</span>
+                        <p className="line-clamp-2 italic">"{item.original_transcript}"</p>
+                      </div>
+                    )}
+
+                    {/* Error message if failed */}
+                    {item.last_error && (
+                      <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-xl text-[11px] text-red-700">
+                        <span className="font-bold block">Last Network / AI Error:</span>
+                        {item.last_error}
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleRetryVaultItem(item)}
+                          disabled={!isOnline}
+                          className={`py-1.5 px-3 rounded-xl font-bold text-xs flex items-center gap-1 transition ${
+                            isOnline
+                              ? "bg-sky-600 text-white hover:bg-sky-700 shadow-xs"
+                              : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                          }`}
+                          title={isOnline ? "Send to AI for transcription" : "Requires internet"}
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Retry AI
+                        </button>
+                        <button
+                          onClick={() => handleUseVaultItemManual(item)}
+                          className="py-1.5 px-3 bg-emerald-600 text-white hover:bg-emerald-700 font-bold text-xs rounded-xl shadow-xs transition flex items-center gap-1"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Use for Review
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleDownloadVaultAudio(item)}
+                          className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition"
+                          title="Download Audio to Device"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteVaultItem(item.id)}
+                          className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-xl transition"
+                          title="Delete from Vault"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

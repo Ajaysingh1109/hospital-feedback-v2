@@ -1,7 +1,7 @@
-import { OfflineFeedbackItem, SessionDraft } from "../types";
+import { AudioVaultItem, OfflineFeedbackItem, SessionDraft } from "../types";
 
 const DB_NAME = "HospitalFeedbackDB";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -98,6 +98,9 @@ function getDB(): Promise<IDBDatabase> {
         }
         if (!db.objectStoreNames.contains("audio_blobs")) {
           db.createObjectStore("audio_blobs", { keyPath: "uuid" });
+        }
+        if (!db.objectStoreNames.contains("audio_vault")) {
+          db.createObjectStore("audio_vault", { keyPath: "id" });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -300,4 +303,105 @@ export async function removeOfflineItem(clientUuid: string): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+// ============================================================================
+// 12-HOUR AUDIO VAULT (OFFLINE RECORDING SAFEGUARD & AUTO-PURGE)
+// ============================================================================
+
+const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+
+export async function saveToAudioVault(item: AudioVaultItem): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("audio_vault", "readwrite");
+    const store = tx.objectStore("audio_vault");
+    store.put(item);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function updateAudioVaultStatus(
+  id: string,
+  status: AudioVaultItem["status"],
+  updates?: Partial<AudioVaultItem>
+): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("audio_vault", "readwrite");
+    const store = tx.objectStore("audio_vault");
+    const req = store.get(id);
+    req.onsuccess = () => {
+      const item = req.result as AudioVaultItem;
+      if (item) {
+        item.status = status;
+        if (updates) {
+          Object.assign(item, updates);
+        }
+        store.put(item);
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function getAudioVaultItems(): Promise<AudioVaultItem[]> {
+  const db = await getDB();
+  // Auto-purge any items older than 12 hours first
+  await purgeExpiredAudioVault();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("audio_vault", "readonly");
+    const store = tx.objectStore("audio_vault");
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const items = (req.result as AudioVaultItem[]) || [];
+      // Sort newest first
+      items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      resolve(items);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteFromAudioVault(id: string): Promise<void> {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("audio_vault", "readwrite");
+    const store = tx.objectStore("audio_vault");
+    store.delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function purgeExpiredAudioVault(): Promise<number> {
+  try {
+    const db = await getDB();
+    const now = Date.now();
+    return new Promise((resolve) => {
+      const tx = db.transaction("audio_vault", "readwrite");
+      const store = tx.objectStore("audio_vault");
+      const req = store.getAll();
+      let purgedCount = 0;
+
+      req.onsuccess = () => {
+        const items = (req.result as AudioVaultItem[]) || [];
+        for (const item of items) {
+          const itemTime = new Date(item.created_at).getTime();
+          if (now - itemTime > TWELVE_HOURS_MS) {
+            store.delete(item.id);
+            purgedCount++;
+          }
+        }
+      };
+
+      tx.oncomplete = () => resolve(purgedCount);
+      tx.onerror = () => resolve(0);
+    });
+  } catch (_) {
+    return 0;
+  }
 }

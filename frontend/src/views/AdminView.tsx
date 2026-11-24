@@ -89,6 +89,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({
     department: "",
+    hod_name: "",
     complaint_type: "Complaint",
     complaint_summary: "",
     original_transcript: "",
@@ -139,12 +140,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const [anRes, mdRes] = await Promise.all([
+      const [anRes, mdRes, hodRes] = await Promise.all([
         fetchAdminAnalytics(),
         fetchMasterData(),
+        fetchHODMappings().catch(() => []),
       ]);
       setAnalytics(anRes);
       setMasterData(mdRes);
+      if (hodRes && hodRes.length > 0) {
+        setHodMappings(hodRes);
+      }
       loadFeedbackList(1);
     } catch (e) {
       console.error("Failed to load admin data:", e);
@@ -206,6 +211,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     setSelectedFeedback(fb);
     setEditForm({
       department: fb.department,
+      hod_name: fb.hod_name || "",
       complaint_type: fb.complaint_type || "Complaint",
       complaint_summary: fb.complaint_summary || "",
       original_transcript: fb.original_transcript || "",
@@ -233,14 +239,15 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
       const payload = {
         ...editForm,
         location: normalizeLocationInput(editForm.location),
+        hod_name: editForm.hod_name.trim(),
       };
       const updated = await correctFeedback(selectedFeedback.feedback_id, payload);
       setSelectedFeedback(updated);
       setIsEditing(false);
       loadFeedbackList(currentPage);
       loadDashboardData();
-    } catch (e) {
-      alert("Failed to save correction.");
+    } catch (e: any) {
+      alert("Failed to save correction: " + (e?.message || e));
     }
   };
 
@@ -341,7 +348,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
     try {
       await updateHODMapping(id, editingHodName.trim());
       setEditingHodId(null);
-      loadMasterDataTab();
+      await loadMasterDataTab();
+      await loadFeedbackList(currentPage);
+      alert("✓ HOD updated successfully. All feedbacks for this department have been synchronized.");
     } catch (e: any) {
       alert("Failed to update HOD: " + (e?.message || e));
     }
@@ -1545,7 +1554,10 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                                 alert("Maximum 4 departments can be selected.");
                                 return;
                               }
-                              setEditForm({ ...editForm, department: [...current, e.target.value].join(", ") });
+                              const newDepts = [...current, e.target.value].join(", ");
+                              const matched = hodMappings.find((m) => m.department_name.toLowerCase() === e.target.value.toLowerCase());
+                              const newHod = matched ? (editForm.hod_name ? `${editForm.hod_name}, ${matched.hod_name}` : matched.hod_name) : editForm.hod_name;
+                              setEditForm({ ...editForm, department: newDepts, hod_name: newHod });
                             }
                           }
                         }}
@@ -1558,6 +1570,24 @@ export const AdminView: React.FC<AdminViewProps> = ({ currentUser }) => {
                             <option key={d.id} value={d.name}>{d.name}</option>
                           ))}
                       </select>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-bold text-slate-600">
+                          Assigned HOD Name (Editable)
+                        </label>
+                        <span className="text-[10px] text-teal-600 font-bold">
+                          Mapped to Department
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        value={editForm.hod_name}
+                        onChange={(e) => setEditForm({ ...editForm, hod_name: e.target.value })}
+                        placeholder="e.g. Tanveer Sir, Reshmi Ma'am, Asha Ma'am"
+                        className="w-full p-2 bg-white border border-teal-300 rounded-xl text-xs font-bold text-teal-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      />
                     </div>
 
                     <div>

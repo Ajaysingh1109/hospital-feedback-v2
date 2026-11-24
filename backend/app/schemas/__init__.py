@@ -350,6 +350,7 @@ class FeedbackListOut(BaseModel):
 
 class FeedbackCorrectionRequest(BaseModel):
     department: Optional[str] = None
+    hod_name: Optional[str] = None
     subcategory: Optional[str] = None
     complaint: Optional[str] = None
     complaint_type: Optional[str] = None

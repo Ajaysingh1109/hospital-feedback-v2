@@ -57,7 +57,7 @@ export function getCurrentUserLocal(): any | null {
 
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit & { timeoutMs?: number } = {}
 ): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -72,14 +72,25 @@ async function request<T>(
     headers["Content-Type"] = "application/json";
   }
 
+  const timeoutMs = options.timeoutMs ?? 25000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
+      signal: options.signal || controller.signal,
     });
-  } catch (_netErr) {
+  } catch (netErr: any) {
+    clearTimeout(timeoutId);
+    if (netErr?.name === "AbortError") {
+      throw new Error("Connection timed out. Network is too slow or unavailable.");
+    }
     throw new Error("Unable to connect. Please check your internet connection.");
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   if (res.status === 401) {
@@ -167,6 +178,7 @@ export async function processAudio(
   return request<ProcessAudioResult>("/feedback/process-audio", {
     method: "POST",
     body: formData,
+    timeoutMs: 30000,
   });
 }
 
